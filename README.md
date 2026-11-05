@@ -9,7 +9,7 @@ Sistema de gestión y distribución de una empresa vitivinícola. La base de dat
 | Rol | Responsable |
 |---|---|
 | P1 · Datos-Núcleo | (completar) |
-| P2 · Datos-Volumen | (completar) |
+| P2 · Datos-Volumen | Mateo Vergara |
 | P3 · API | (completar) |
 | P4 · Front e Infraestructura | (completar) |
 
