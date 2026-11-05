@@ -520,6 +520,29 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
 
+  /ingresos/{cod}/terminar:
+    parameters:
+      - $ref: '#/components/parameters/CodIngreso'
+    post:
+      tags: [Ingresos]
+      summary: Pasa el ingreso de en_confeccion a terminado
+      description: |
+        Cambia el estado del ingreso para habilitar su procesamiento. Si el
+        documento no está en confección, la base responde P0001 y la API
+        devuelve 409.
+      operationId: terminarIngreso
+      responses:
+        '200':
+          description: Ingreso terminado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingreso'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /ingresos/{cod}/procesar:
     parameters:
       - $ref: '#/components/parameters/CodIngreso'
