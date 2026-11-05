@@ -1,0 +1,1529 @@
+openapi: 3.0.3
+
+info:
+  title: API REST · Bodegas del Atuel
+  version: 0.1.0
+  description: |
+    Borrador de contrato para la API REST del TPI «Bodegas del Atuel».
+
+    Reglas de arquitectura:
+    - La API usa SQL puro parametrizado y un driver nativo (psycopg 3). No hay ORM.
+    - La API NUNCA recalcula totales, descuentos, impuestos ni stock. Esos valores
+      los calculan las funciones, procedimientos y triggers de PostgreSQL.
+    - La conexión se realiza con el rol `app_rw` (privilegios mínimos), nunca con
+      el propietario de la base.
+    - Los errores de PostgreSQL se traducen a HTTP usando SQLSTATE:
+      23505 → 409, 23503 → 409/422, 23514/23502 → 422, P0001 → 409, 22P02 → 400,
+      40001/40P01 → 503.
+
+    Este archivo es la Fase 1.7 (borrador). Los endpoints de escritura se
+    completan en la Fase 6.
+  contact:
+    name: Equipo Bodegas del Atuel · UTN FRSR
+  license:
+    name: Uso académico
+    url: https://www.utn.edu.ar/
+
+# La API del TPI no implementa autenticación compleja; se deja explícito para
+# que el contrato no herede esquemas de seguridad de otras herramientas.
+security: []
+
+servers:
+  - url: http://localhost:8000
+    description: API local levantada con Docker Compose
+  - url: https://api.bodegas-del-atuel.example
+    description: Despliegue en la nube (a definir en la Fase 8)
+
+tags:
+  - name: Salud
+    description: Verificación de disponibilidad de la API y de la base.
+  - name: Vinos
+    description: Catálogo, alta, modificación y baja de vinos.
+  - name: Clientes
+    description: CRUD de clientes y sus tres subtipos.
+  - name: Comprobantes
+    description: Venta completa (cabecera y renglones) en una transacción.
+  - name: Transferencias
+    description: Solicitudes de stock desde el depósito central hacia una sala.
+  - name: Ingresos
+    description: Ingresos de producción al depósito central.
+  - name: Reportes
+    description: Consultas de solo lectura de la sección 8 del enunciado.
+
+paths:
+  /salud:
+    get:
+      tags: [Salud]
+      summary: Verifica que la API llega a la base
+      operationId: getSalud
+      responses:
+        '200':
+          description: API y base disponibles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Salud'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /vinos:
+    get:
+      tags: [Vinos]
+      summary: Catálogo de vinos con filtros y paginación
+      operationId: listarVinos
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: nombre
+          in: query
+          description: Búsqueda parcial por nombre comercial (ILIKE, parametrizada).
+          schema:
+            type: string
+            example: Malbec
+        - name: tipo
+          in: query
+          description: Filtra por tipo de vino.
+          schema:
+            $ref: '#/components/schemas/TipoVino'
+        - name: id_cepa
+          in: query
+          description: Vinos que contienen la cepa indicada.
+          schema:
+            type: integer
+            example: 1
+        - name: cuit_bodega
+          in: query
+          description: Vinos elaborados por una bodega (CUIT de 11 dígitos).
+          schema:
+            type: string
+            pattern: '^[0-9]{11}$'
+            example: '30712345678'
+        - name: anada
+          in: query
+          description: Añada del vino.
+          schema:
+            type: integer
+            example: 2021
+      responses:
+        '200':
+          description: Página de vinos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VinoPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Vinos]
+      summary: Alta de un vino con composición y maridajes
+      operationId: crearVino
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VinoCreate'
+      responses:
+        '201':
+          description: Vino creado. La base valida que la composición sume 100.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VinoDetalle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /vinos/{cod}:
+    parameters:
+      - $ref: '#/components/parameters/CodVino'
+    get:
+      tags: [Vinos]
+      summary: Detalle de un vino
+      description: Incluye cepas con porcentajes, maridajes y stock total.
+      operationId: obtenerVino
+      responses:
+        '200':
+          description: Ficha completa del vino.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VinoDetalle'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Vinos]
+      summary: Modificación de un vino
+      description: |
+        La base audita todo cambio de precio en `auditoria_precio` (RN-13).
+        Si se envía `composicion`, la suma de porcentajes debe ser 100.
+      operationId: actualizarVino
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VinoUpdate'
+      responses:
+        '200':
+          description: Vino actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VinoDetalle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags: [Vinos]
+      summary: Baja de un vino
+      description: |
+        Falla con 409 si el vino tiene movimientos asociados (RN-14: renglones
+        de comprobante, ingreso, transferencia o stock usan ON DELETE RESTRICT).
+      operationId: eliminarVino
+      responses:
+        '204':
+          description: Vino eliminado.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /clientes:
+    get:
+      tags: [Clientes]
+      summary: Listado paginado de clientes
+      operationId: listarClientes
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: tipo
+          in: query
+          description: Filtra por subtipo de cliente.
+          schema:
+            $ref: '#/components/schemas/TipoCliente'
+        - name: id_localidad
+          in: query
+          description: Localidad del cliente.
+          schema:
+            type: integer
+            example: 1
+        - name: q
+          in: query
+          description: Búsqueda parcial por nombre o documento (parametrizada).
+          schema:
+            type: string
+            example: Los Andes
+      responses:
+        '200':
+          description: Página de clientes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [Clientes]
+      summary: Alta de un cliente
+      description: |
+        El descuento NO se envía desde la API: la base lo asigna según el tipo
+        (socio 10 %, distribuidor 20 %, exportador 30 %) mediante la función
+        `fn_descuento_cliente` y sus constraints/triggers.
+      operationId: crearCliente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClienteCreate'
+      responses:
+        '201':
+          description: Cliente creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClienteDetalle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /clientes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdCliente'
+    get:
+      tags: [Clientes]
+      summary: Detalle de un cliente
+      operationId: obtenerCliente
+      responses:
+        '200':
+          description: Cliente con los datos de su subtipo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClienteDetalle'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Clientes]
+      summary: Modificación de un cliente
+      operationId: actualizarCliente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClienteUpdate'
+      responses:
+        '200':
+          description: Cliente actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClienteDetalle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags: [Clientes]
+      summary: Baja de un cliente
+      description: |
+        Falla con 409 si el cliente tiene comprobantes (FK RESTRICT). Los datos
+        del subtipo se eliminan en cascada.
+      operationId: eliminarCliente
+      responses:
+        '204':
+          description: Cliente eliminado.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /comprobantes:
+    post:
+      tags: [Comprobantes]
+      summary: Registra una venta completa
+      description: |
+        Recibe cabecera y renglones. La API abre una transacción y envía solo
+        `cod_vino` y `cantidad`: los precios, descuentos, subtotales y totales
+        los calculan los triggers y funciones de la base. Si no hay stock en la
+        sala, la base rechaza la operación con P0001 y la API responde 409.
+      operationId: crearComprobante
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComprobanteCreate'
+      responses:
+        '201':
+          description: Comprobante creado y totales calculados por la base.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comprobante'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /comprobantes/{nro}:
+    parameters:
+      - $ref: '#/components/parameters/NroComprobante'
+    get:
+      tags: [Comprobantes]
+      summary: Detalle de un comprobante
+      operationId: obtenerComprobante
+      responses:
+        '200':
+          description: Comprobante con sus renglones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comprobante'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /transferencias:
+    post:
+      tags: [Transferencias]
+      summary: Crea una transferencia en confección
+      description: La fecha de confección la fuerza la base con un trigger (RN-11).
+      operationId: crearTransferencia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferenciaCreate'
+      responses:
+        '201':
+          description: Transferencia creada en estado en_confeccion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transferencia'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /transferencias/{nro}/renglones:
+    parameters:
+      - $ref: '#/components/parameters/NroTransferencia'
+    post:
+      tags: [Transferencias]
+      summary: Agrega un renglón a una transferencia en confección
+      description: Si la transferencia no está en confección, la base responde P0001 (409).
+      operationId: agregarRenglonTransferencia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenglonDocumentoCreate'
+      responses:
+        '201':
+          description: Renglón agregado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transferencia'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /transferencias/{nro}/terminar:
+    parameters:
+      - $ref: '#/components/parameters/NroTransferencia'
+    post:
+      tags: [Transferencias]
+      summary: Pasa la transferencia de en_confeccion a terminado
+      operationId: terminarTransferencia
+      responses:
+        '200':
+          description: Transferencia terminada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transferencia'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /transferencias/{nro}/procesar:
+    parameters:
+      - $ref: '#/components/parameters/NroTransferencia'
+    post:
+      tags: [Transferencias]
+      summary: Procesa la transferencia y mueve stock
+      description: |
+        Invoca el procedimiento `sp_procesar_transferencia`. Descuenta del
+        depósito central y suma a la sala en una sola transacción. Falla con
+        409 si el estado no es terminado o si el depósito no tiene stock.
+      operationId: procesarTransferencia
+      responses:
+        '200':
+          description: Transferencia procesada y stock actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transferencia'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /ingresos:
+    post:
+      tags: [Ingresos]
+      summary: Crea un ingreso en confección
+      operationId: crearIngreso
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngresoCreate'
+      responses:
+        '201':
+          description: Ingreso creado en estado en_confeccion.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingreso'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /ingresos/{cod}/renglones:
+    parameters:
+      - $ref: '#/components/parameters/CodIngreso'
+    post:
+      tags: [Ingresos]
+      summary: Agrega un renglón a un ingreso en confección
+      operationId: agregarRenglonIngreso
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenglonDocumentoCreate'
+      responses:
+        '201':
+          description: Renglón agregado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingreso'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /ingresos/{cod}/procesar:
+    parameters:
+      - $ref: '#/components/parameters/CodIngreso'
+    post:
+      tags: [Ingresos]
+      summary: Procesa el ingreso e impacta el stock del depósito
+      description: Invoca el procedimiento `sp_procesar_ingreso`.
+      operationId: procesarIngreso
+      responses:
+        '200':
+          description: Ingreso procesado y stock actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingreso'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /reportes/top-vinos:
+    get:
+      tags: [Reportes]
+      summary: Ranking de vinos más vendidos (S1)
+      operationId: reporteTopVinos
+      parameters:
+        - name: limite
+          in: query
+          description: Cantidad de vinos a devolver (por defecto 10).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Vinos ordenados por botellas vendidas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TopVino'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /reportes/ventas-por-sala:
+    get:
+      tags: [Reportes]
+      summary: Ventas mensuales por sala (S8)
+      operationId: reporteVentasPorSala
+      parameters:
+        - name: desde
+          in: query
+          description: Fecha inicial inclusive (YYYY-MM-DD). Por defecto, último trimestre.
+          schema:
+            type: string
+            format: date
+            example: '2026-07-01'
+        - name: hasta
+          in: query
+          description: Fecha final inclusive (YYYY-MM-DD). Por defecto, hoy.
+          schema:
+            type: string
+            format: date
+            example: '2026-09-30'
+      responses:
+        '200':
+          description: Totales mensuales por sala.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VentaMensualSala'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /reportes/vinos-sin-stock:
+    get:
+      tags: [Reportes]
+      summary: Vinos sin stock en una sala pero con stock en depósito (S6)
+      operationId: reporteVinosSinStock
+      parameters:
+        - name: id_sala
+          in: query
+          required: true
+          description: Sala que se quiere analizar.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Vinos que conviene transferir a la sala.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VinoSinStock'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reportes/transportista-activo:
+    get:
+      tags: [Reportes]
+      summary: Transportista con mayor actividad en el último mes (S7)
+      operationId: reporteTransportistaActivo
+      responses:
+        '200':
+          description: Empresa de transporte con más ingresos trasladados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransportistaActivo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /reportes/trazabilidad/{cod}:
+    parameters:
+      - $ref: '#/components/parameters/CodVino'
+    get:
+      tags: [Reportes]
+      summary: Ficha completa del vino (S9)
+      description: |
+        Cepas con porcentajes, bodega elaboradora, maridajes y stock total
+        (depósito más salas). Se apoya en la vista `vw_ficha_vino`.
+      operationId: reporteTrazabilidadVino
+      responses:
+        '200':
+          description: Ficha del vino.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VinoDetalle'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Número de página (1-based).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      description: Elementos por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CodVino:
+      name: cod
+      in: path
+      required: true
+      description: Código del vino.
+      schema:
+        type: integer
+        example: 1
+    IdCliente:
+      name: id
+      in: path
+      required: true
+      description: Identificador del cliente.
+      schema:
+        type: integer
+        example: 1
+    NroComprobante:
+      name: nro
+      in: path
+      required: true
+      description: Número de comprobante.
+      schema:
+        type: integer
+        example: 1001
+    NroTransferencia:
+      name: nro
+      in: path
+      required: true
+      description: Número de solicitud de transferencia.
+      schema:
+        type: integer
+        example: 5001
+    CodIngreso:
+      name: cod
+      in: path
+      required: true
+      description: Código de ingreso.
+      schema:
+        type: integer
+        example: 3001
+
+  responses:
+    BadRequest:
+      description: |
+        Solicitud inválida. Incluye SQLSTATE 22P02 (texto con formato inválido)
+        o parámetros de paginación fuera de rango.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: El recurso solicitado no existe.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: |
+        Conflicto de integridad o regla de negocio: UNIQUE (23505), FOREIGN KEY
+        (23503) o RAISE EXCEPTION de un trigger/procedimiento (P0001).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: |
+        Dato semánticamente inválido: CHECK (23514) o NOT NULL (23502).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: |
+        Base no disponible, fallo de serialización (40001) o deadlock (40P01).
+        La operación puede reintentarse.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    TipoVino:
+      type: string
+      enum: [tinto, blanco, rosado, espumante]
+      example: tinto
+
+    TipoCliente:
+      type: string
+      enum: [socio, distribuidor, exportador]
+      example: socio
+
+    EstadoDocumento:
+      type: string
+      enum: [en_confeccion, terminado, procesado]
+      example: en_confeccion
+
+    Error:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+          description: SQLSTATE de PostgreSQL o código interno de la API.
+          example: '23505'
+        mensaje:
+          type: string
+          description: Mensaje legible para el cliente.
+          example: Ya existe un vino con ese nombre, añada y presentación.
+        detalle:
+          type: string
+          nullable: true
+          description: Detalle técnico opcional (sin secretos).
+        regla:
+          type: string
+          nullable: true
+          description: Regla de negocio asociada, si corresponde.
+          example: RN-14
+
+    PageMeta:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 137
+        total_pages:
+          type: integer
+          example: 7
+
+    Salud:
+      type: object
+      required: [status, db, version, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
+        db:
+          type: boolean
+          example: true
+        version:
+          type: string
+          example: PostgreSQL 16.15
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-11-05T13:30:00Z'
+
+    ComposicionItem:
+      type: object
+      required: [id_cepa, porcentaje]
+      properties:
+        id_cepa:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          readOnly: true
+          example: Malbec
+        porcentaje:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          example: 85.00
+
+    MaridajeItem:
+      type: object
+      required: [id_maridaje]
+      properties:
+        id_maridaje:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          readOnly: true
+          example: Carnes rojas
+        temperatura_servicio:
+          type: number
+          format: float
+          readOnly: true
+          example: 17.0
+
+    StockVino:
+      type: object
+      required: [deposito, salas, total]
+      properties:
+        deposito:
+          type: integer
+          example: 120
+        salas:
+          type: integer
+          example: 45
+        total:
+          type: integer
+          example: 165
+
+    VinoResumen:
+      type: object
+      required:
+        - cod_vino
+        - nombre_comercial
+        - tipo
+        - anada
+        - presentacion_ml
+        - graduacion
+        - precio_venta
+        - cuit_bodega
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        nombre_comercial:
+          type: string
+          maxLength: 120
+          example: Malbec Reserva
+        tipo:
+          $ref: '#/components/schemas/TipoVino'
+        anada:
+          type: integer
+          example: 2021
+        presentacion_ml:
+          type: integer
+          example: 750
+        graduacion:
+          type: number
+          format: float
+          example: 14.0
+        precio_venta:
+          type: number
+          format: float
+          description: Precio de venta único para toda la red (RN-01).
+          example: 12500.0
+        cuit_bodega:
+          type: string
+          example: '30712345678'
+        bodega:
+          type: string
+          readOnly: true
+          example: Bodega del Atuel S.A.
+
+    VinoDetalle:
+      allOf:
+        - $ref: '#/components/schemas/VinoResumen'
+        - type: object
+          properties:
+            composicion:
+              type: array
+              items:
+                $ref: '#/components/schemas/ComposicionItem'
+            maridajes:
+              type: array
+              items:
+                $ref: '#/components/schemas/MaridajeItem'
+            stock:
+              $ref: '#/components/schemas/StockVino'
+
+    VinoCreate:
+      type: object
+      required:
+        - nombre_comercial
+        - tipo
+        - anada
+        - presentacion_ml
+        - graduacion
+        - precio_venta
+        - cuit_bodega
+        - composicion
+      properties:
+        nombre_comercial:
+          type: string
+          maxLength: 120
+          example: Malbec Reserva
+        tipo:
+          $ref: '#/components/schemas/TipoVino'
+        anada:
+          type: integer
+          example: 2021
+        presentacion_ml:
+          type: integer
+          enum: [375, 750, 1500]
+          example: 750
+        graduacion:
+          type: number
+          format: float
+          minimum: 5
+          maximum: 20
+          example: 14.0
+        precio_venta:
+          type: number
+          format: float
+          minimum: 0
+          exclusiveMinimum: true
+          example: 12500.0
+        cuit_bodega:
+          type: string
+          pattern: '^[0-9]{11}$'
+          example: '30712345678'
+        composicion:
+          type: array
+          minItems: 1
+          description: La suma de porcentajes debe ser exactamente 100 (RN-05).
+          items:
+            type: object
+            required: [id_cepa, porcentaje]
+            properties:
+              id_cepa:
+                type: integer
+                example: 1
+              porcentaje:
+                type: number
+                format: float
+                minimum: 0
+                maximum: 100
+                example: 85.0
+        maridajes:
+          type: array
+          description: IDs de maridajes sugeridos.
+          items:
+            type: integer
+            example: 1
+
+    VinoUpdate:
+      type: object
+      properties:
+        nombre_comercial:
+          type: string
+          maxLength: 120
+        tipo:
+          $ref: '#/components/schemas/TipoVino'
+        anada:
+          type: integer
+        presentacion_ml:
+          type: integer
+        graduacion:
+          type: number
+          format: float
+          minimum: 5
+          maximum: 20
+        precio_venta:
+          type: number
+          format: float
+          minimum: 0
+          exclusiveMinimum: true
+        cuit_bodega:
+          type: string
+          pattern: '^[0-9]{11}$'
+        composicion:
+          type: array
+          description: Si se envía, reemplaza la composición completa y debe sumar 100.
+          items:
+            type: object
+            required: [id_cepa, porcentaje]
+            properties:
+              id_cepa:
+                type: integer
+              porcentaje:
+                type: number
+                format: float
+                minimum: 0
+                maximum: 100
+        maridajes:
+          type: array
+          items:
+            type: integer
+
+    VinoPage:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VinoResumen'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    PermisoExportacion:
+      type: object
+      required: [cod_permiso, fecha_emision, fecha_vencimiento]
+      properties:
+        cod_permiso:
+          type: string
+          maxLength: 20
+          example: EXP-2026-001
+        fecha_emision:
+          type: string
+          format: date
+          example: '2026-01-15'
+        fecha_vencimiento:
+          type: string
+          format: date
+          description: Debe ser posterior a la fecha de emisión (RN-07).
+          example: '2027-01-15'
+
+    ClienteResumen:
+      type: object
+      required:
+        - id_cliente
+        - nombre
+        - tipo
+        - tipo_documento
+        - nro_documento
+        - id_localidad
+        - fecha_alta
+        - descuento
+      properties:
+        id_cliente:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          maxLength: 120
+          example: Juan Pérez
+        tipo:
+          $ref: '#/components/schemas/TipoCliente'
+        tipo_documento:
+          type: string
+          maxLength: 10
+          example: DNI
+        nro_documento:
+          type: string
+          maxLength: 20
+          example: '30123456'
+        direccion:
+          type: string
+          maxLength: 150
+          example: Av. San Martín 123
+        id_localidad:
+          type: integer
+          example: 1
+        localidad:
+          type: string
+          readOnly: true
+          example: San Rafael
+        fecha_alta:
+          type: string
+          format: date
+          example: '2024-03-10'
+        descuento:
+          type: number
+          format: float
+          readOnly: true
+          description: Porcentaje asignado por la base según el tipo de cliente (RN-06).
+          example: 10.0
+
+    ClienteDetalle:
+      allOf:
+        - $ref: '#/components/schemas/ClienteResumen'
+        - type: object
+          properties:
+            zona_cobertura:
+              type: string
+              nullable: true
+              description: Solo distribuidores.
+              example: Zona Sur
+            nro_habilitacion:
+              type: string
+              nullable: true
+              description: Solo distribuidores.
+              example: HAB-001
+            pais_destino_principal:
+              type: string
+              nullable: true
+              description: Solo exportadores.
+              example: Brasil
+            permisos:
+              type: array
+              description: Solo exportadores.
+              items:
+                $ref: '#/components/schemas/PermisoExportacion'
+
+    ClienteCreate:
+      type: object
+      required:
+        - nombre
+        - tipo
+        - tipo_documento
+        - nro_documento
+        - id_localidad
+      properties:
+        nombre:
+          type: string
+          maxLength: 120
+          example: Juan Pérez
+        tipo:
+          $ref: '#/components/schemas/TipoCliente'
+        tipo_documento:
+          type: string
+          maxLength: 10
+          example: DNI
+        nro_documento:
+          type: string
+          maxLength: 20
+          example: '30123456'
+        direccion:
+          type: string
+          maxLength: 150
+          example: Av. San Martín 123
+        id_localidad:
+          type: integer
+          example: 1
+        fecha_alta:
+          type: string
+          format: date
+          description: Si se omite, la base usa la fecha actual.
+          example: '2026-11-05'
+        zona_cobertura:
+          type: string
+          description: Obligatorio si tipo = distribuidor.
+          example: Zona Sur
+        nro_habilitacion:
+          type: string
+          description: Obligatorio si tipo = distribuidor.
+          example: HAB-001
+        pais_destino_principal:
+          type: string
+          description: Obligatorio si tipo = exportador.
+          example: Brasil
+        permisos:
+          type: array
+          description: Solo exportadores.
+          items:
+            $ref: '#/components/schemas/PermisoExportacion'
+
+    ClienteUpdate:
+      type: object
+      properties:
+        nombre:
+          type: string
+          maxLength: 120
+        tipo_documento:
+          type: string
+          maxLength: 10
+        nro_documento:
+          type: string
+          maxLength: 20
+        direccion:
+          type: string
+          maxLength: 150
+        id_localidad:
+          type: integer
+        zona_cobertura:
+          type: string
+        nro_habilitacion:
+          type: string
+        pais_destino_principal:
+          type: string
+        permisos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermisoExportacion'
+
+    ClientePage:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClienteResumen'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    ComprobanteRenglonCreate:
+      type: object
+      required: [cod_vino, cantidad]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        cantidad:
+          type: integer
+          minimum: 1
+          example: 3
+        # Los campos de precio, descuento y subtotal NO se aceptan desde la API.
+
+    ComprobanteCreate:
+      type: object
+      required: [id_cliente, id_sala, renglones]
+      properties:
+        id_cliente:
+          type: integer
+          example: 1
+        id_sala:
+          type: integer
+          example: 1
+        fecha:
+          type: string
+          format: date
+          description: Si se omite, la base usa CURRENT_DATE.
+          example: '2026-11-05'
+        renglones:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ComprobanteRenglonCreate'
+
+    ComprobanteRenglon:
+      type: object
+      required: [cod_vino, cantidad, precio_unitario, descuento, subtotal]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        nombre_comercial:
+          type: string
+          readOnly: true
+          example: Malbec Reserva
+        cantidad:
+          type: integer
+          example: 3
+        precio_unitario:
+          type: number
+          format: float
+          readOnly: true
+          example: 12500.0
+        descuento:
+          type: number
+          format: float
+          readOnly: true
+          description: Importe de descuento del renglón calculado por la base.
+          example: 3750.0
+        subtotal:
+          type: number
+          format: float
+          readOnly: true
+          example: 33750.0
+
+    Comprobante:
+      type: object
+      required:
+        - nro_comprobante
+        - fecha
+        - id_cliente
+        - id_sala
+        - subtotal
+        - descuento
+        - total
+        - renglones
+      properties:
+        nro_comprobante:
+          type: integer
+          example: 1001
+        fecha:
+          type: string
+          format: date
+          example: '2026-11-05'
+        id_cliente:
+          type: integer
+          example: 1
+        id_sala:
+          type: integer
+          example: 1
+        subtotal:
+          type: number
+          format: float
+          readOnly: true
+          example: 37500.0
+        descuento:
+          type: number
+          format: float
+          readOnly: true
+          example: 3750.0
+        total:
+          type: number
+          format: float
+          readOnly: true
+          example: 33750.0
+        renglones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComprobanteRenglon'
+
+    RenglonDocumentoCreate:
+      type: object
+      required: [cod_vino, cantidad]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        cantidad:
+          type: integer
+          minimum: 1
+          example: 120
+
+    DocumentoRenglon:
+      type: object
+      required: [cod_vino, cantidad]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        nombre_comercial:
+          type: string
+          readOnly: true
+          example: Malbec Reserva
+        cantidad:
+          type: integer
+          example: 120
+
+    TransferenciaCreate:
+      type: object
+      required: [id_sala]
+      properties:
+        id_sala:
+          type: integer
+          example: 1
+
+    Transferencia:
+      type: object
+      required: [nro_solicitud, id_sala, fecha_confeccion, estado]
+      properties:
+        nro_solicitud:
+          type: integer
+          example: 5001
+        id_sala:
+          type: integer
+          example: 1
+        fecha_confeccion:
+          type: string
+          format: date
+          readOnly: true
+          description: La fuerza la base con un trigger (RN-11).
+          example: '2026-11-05'
+        estado:
+          $ref: '#/components/schemas/EstadoDocumento'
+        renglones:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentoRenglon'
+
+    IngresoCreate:
+      type: object
+      required: [id_transportista, cuit_bodega]
+      properties:
+        id_transportista:
+          type: integer
+          example: 1
+        cuit_bodega:
+          type: string
+          pattern: '^[0-9]{11}$'
+          example: '30712345678'
+        fecha:
+          type: string
+          format: date
+          description: Si se omite, la base usa CURRENT_DATE.
+          example: '2026-11-05'
+
+    Ingreso:
+      type: object
+      required: [cod_ingreso, fecha, estado, id_transportista, cuit_bodega]
+      properties:
+        cod_ingreso:
+          type: integer
+          example: 3001
+        fecha:
+          type: string
+          format: date
+          example: '2026-11-05'
+        estado:
+          $ref: '#/components/schemas/EstadoDocumento'
+        id_transportista:
+          type: integer
+          example: 1
+        cuit_bodega:
+          type: string
+          example: '30712345678'
+        renglones:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentoRenglon'
+
+    TopVino:
+      type: object
+      required: [cod_vino, nombre_comercial, botellas_vendidas]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        nombre_comercial:
+          type: string
+          example: Malbec Reserva
+        botellas_vendidas:
+          type: integer
+          example: 1520
+
+    VentaMensualSala:
+      type: object
+      required: [id_sala, localidad, mes, botellas_vendidas, monto_total]
+      properties:
+        id_sala:
+          type: integer
+          example: 1
+        localidad:
+          type: string
+          example: San Rafael
+        mes:
+          type: string
+          format: date
+          description: Primer día del mes calculado con date_trunc('month', fecha).
+          example: '2026-09-01'
+        botellas_vendidas:
+          type: integer
+          example: 430
+        monto_total:
+          type: number
+          format: float
+          example: 5375000.0
+
+    VinoSinStock:
+      type: object
+      required: [cod_vino, nombre_comercial, stock_sala, stock_deposito]
+      properties:
+        cod_vino:
+          type: integer
+          example: 1
+        nombre_comercial:
+          type: string
+          example: Malbec Reserva
+        stock_sala:
+          type: integer
+          example: 0
+        stock_deposito:
+          type: integer
+          example: 120
+
+    TransportistaActivo:
+      type: object
+      required: [id_transportista, razon_social, ingresos_trasladados]
+      properties:
+        id_transportista:
+          type: integer
+          example: 1
+        razon_social:
+          type: string
+          example: Transportes Cuyo SRL
+        ingresos_trasladados:
+          type: integer
+          example: 48
