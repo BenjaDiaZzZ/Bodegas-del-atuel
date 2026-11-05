@@ -5,15 +5,16 @@
 -- Requisito de la etapa 2: 3 roles.
 --   bda_owner → propietario lógico de la base y de los objetos.
 --   app_rw    → lectura/escritura para la API REST (nunca DDL).
---   app_ro    → solo lectura para reportes.
+--   reporte_ro → solo lectura para reportes.
 --
 -- Decisiones de seguridad:
 --   - Se revocan los privilegios de PUBLIC sobre el esquema y los objetos.
 --   - app_rw recibe solo DML (SELECT/INSERT/UPDATE/DELETE), uso de secuencias
 --     y EXECUTE sobre funciones/procedimientos. No puede crear objetos.
---   - app_ro recibe solo SELECT. No puede ejecutar rutinas ni usar secuencias.
---   - Las contraseñas de ejemplo NO son secretos reales: en el despliegue se
---     reemplazan por variables de entorno y se rotan. Nunca se commitea .env.
+--   - reporte_ro recibe solo SELECT. No puede ejecutar rutinas ni usar secuencias.
+--   - Las contraseñas NO se escriben en este archivo. Los roles se crean sin
+--     LOGIN y `scripts/set_role_passwords.sh` les asigna la contraseña desde
+--     DB_PASSWORD y REPORTE_RO_PASSWORD. Nunca se commitea .env.
 --
 -- En el Docker Compose local, el usuario `POSTGRES_USER` (por defecto
 -- `bodegas`) es el propietario real del clúster/base. `bda_owner` queda como
@@ -32,21 +33,31 @@ BEGIN
         CREATE ROLE bda_owner NOLOGIN;
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_rw') THEN
-        CREATE ROLE app_rw LOGIN PASSWORD 'CAMBIAR_EN_DESPLIEGUE';
+    -- Compatibilidad con bases creadas antes del rename app_ro → reporte_ro.
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_ro')
+       AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reporte_ro') THEN
+        EXECUTE 'ALTER ROLE app_ro RENAME TO reporte_ro';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_ro') THEN
-        CREATE ROLE app_ro LOGIN PASSWORD 'CAMBIAR_EN_DESPLIEGUE';
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_rw') THEN
+        CREATE ROLE app_rw NOLOGIN;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'reporte_ro') THEN
+        CREATE ROLE reporte_ro NOLOGIN;
     END IF;
 END
 $$;
+
+-- Las contraseñas se asignan después de la inicialización:
+--   ./scripts/set_role_passwords.sh
+-- El script lee DB_PASSWORD y REPORTE_RO_PASSWORD del entorno.
 
 COMMENT ON ROLE bda_owner IS
     'Propietario lógico de la base y de los objetos del TPI Bodegas del Atuel.';
 COMMENT ON ROLE app_rw IS
     'Rol de lectura/escritura usado por la API REST. Sin permisos DDL.';
-COMMENT ON ROLE app_ro IS
+COMMENT ON ROLE reporte_ro IS
     'Rol de solo lectura usado por los reportes. Sin permisos de escritura.';
 
 -- -----------------------------------------------------------------------------
@@ -55,7 +66,7 @@ COMMENT ON ROLE app_ro IS
 --    para que solo los tres roles del proyecto puedan entrar al esquema.
 -- -----------------------------------------------------------------------------
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO bda_owner, app_rw, app_ro;
+GRANT USAGE ON SCHEMA public TO bda_owner, app_rw, reporte_ro;
 GRANT CREATE ON SCHEMA public TO bda_owner;
 
 -- -----------------------------------------------------------------------------
@@ -99,11 +110,11 @@ GRANT EXECUTE
 -- -----------------------------------------------------------------------------
 GRANT SELECT
     ON ALL TABLES IN SCHEMA public
-    TO app_ro;
+    TO reporte_ro;
 
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
     ON ALL TABLES IN SCHEMA public
-    FROM app_ro;
+    FROM reporte_ro;
 
 -- -----------------------------------------------------------------------------
 -- 7. Privilegios por defecto para objetos que se creen en el futuro
@@ -117,7 +128,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT EXECUTE ON ROUTINES TO app_rw;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT ON TABLES TO app_ro;
+    GRANT SELECT ON TABLES TO reporte_ro;
 
 -- -----------------------------------------------------------------------------
 -- 8. Conexión a la base: quitar CONNECT a PUBLIC y darlo solo a los roles
@@ -126,7 +137,7 @@ DO $$
 BEGIN
     EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
     EXECUTE format(
-        'GRANT CONNECT ON DATABASE %I TO bda_owner, app_rw, app_ro',
+        'GRANT CONNECT ON DATABASE %I TO bda_owner, app_rw, reporte_ro',
         current_database()
     );
 END

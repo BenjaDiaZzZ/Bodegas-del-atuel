@@ -59,6 +59,9 @@ if [[ "$status" != "healthy" ]]; then
   exit 1
 fi
 
+echo "Asignando contraseñas de los roles de aplicación..."
+./scripts/set_role_passwords.sh
+
 echo "Base recreada. Migraciones disponibles en /docker-entrypoint-initdb.d:"
 docker compose exec -T db sh -c 'ls -1 /docker-entrypoint-initdb.d 2>/dev/null || true'
 
