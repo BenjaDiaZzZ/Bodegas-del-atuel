@@ -277,6 +277,118 @@ BEGIN
     DELETE FROM ingreso WHERE cod_ingreso = v_cod;
 END $$;
 
+-- -----------------------------------------------------------------------------
+-- 9. CHECK: renglon_comprobante.descuento >= 0 (importe, no porcentaje)
+-- -----------------------------------------------------------------------------
+-- 9a. Debe funcionar: descuento = 150.00 (mayor a 100, pero es un importe)
+DO $$
+DECLARE
+    v_cod integer;
+    v_nro integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Descuento OK', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_cod;
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
+    VALUES ('2024-06-01', 1, 1, 1000.00, 0.00, 1000.00)
+    RETURNING nro_comprobante INTO v_nro;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
+    VALUES (v_nro, v_cod, 1, 1000.00, 150.00, 850.00);
+
+    RAISE NOTICE 'OK: descuento 150.00 aceptado como importe';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_nro;
+    DELETE FROM vino WHERE cod_vino = v_cod;
+END $$;
+
+-- 9b. Debe fallar: descuento = -1  -- esperado: 23514
+DO $$
+DECLARE
+    v_cod integer;
+    v_nro integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Descuento Mal', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_cod;
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
+    VALUES ('2024-06-01', 1, 1, 1000.00, 0.00, 1000.00)
+    RETURNING nro_comprobante INTO v_nro;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
+    VALUES (v_nro, v_cod, 1, 1000.00, -1.00, 1001.00);
+
+    RAISE EXCEPTION 'FAIL: descuento negativo no deberia permitirse';
+EXCEPTION WHEN check_violation THEN
+    -- El bloque se revierte completo: el vino y el comprobante tampoco persisten.
+    RAISE NOTICE 'OK: descuento negativo rechazado (23514)';
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- 10. FK compuesta: cliente.tipo no se actualiza si existe fila de subtipo
+-- -----------------------------------------------------------------------------
+-- 10a. Debe fallar: el cliente 2 es exportador y tiene fila en exportador
+DO $$
+BEGIN
+    UPDATE cliente SET tipo = 'socio' WHERE id_cliente = 2;
+
+    RAISE EXCEPTION 'FAIL: cambio de tipo con exportador existente no deberia permitirse';
+EXCEPTION WHEN foreign_key_violation THEN
+    RAISE NOTICE 'OK: update de tipo bloqueado por FK (23503)';
+END $$;
+
+-- 10b. Debe funcionar: un cliente sin fila de subtipo puede cambiar de tipo
+DO $$
+DECLARE
+    v_id integer;
+BEGIN
+    SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_id FROM cliente;
+
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
+    VALUES (v_id, 'Cliente Sin Subtipo', 'socio', 'DNI', '30888888', 'Calle Sin Subtipo 1', 1, '2020-01-01', 0.00);
+
+    UPDATE cliente SET tipo = 'distribuidor' WHERE id_cliente = v_id;
+
+    RAISE NOTICE 'OK: cliente sin subtipo puede cambiar de tipo';
+
+    DELETE FROM cliente WHERE id_cliente = v_id;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- 11. CHECK: localidad.codigo_postal con formato de 4 dígitos
+-- -----------------------------------------------------------------------------
+-- 11a. Debe funcionar: '5600'
+DO $$
+DECLARE
+    v_id integer;
+BEGIN
+    SELECT COALESCE(MAX(id_localidad), 0) + 1 INTO v_id FROM localidad;
+
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional)
+    VALUES (v_id, '5600', 'Localidad CP OK', 'Mendoza', 'Encargado Test');
+
+    RAISE NOTICE 'OK: codigo postal 5600 aceptado';
+
+    DELETE FROM localidad WHERE id_localidad = v_id;
+END $$;
+
+-- 11b. Debe fallar: '55'  -- esperado: 23514
+DO $$
+DECLARE
+    v_id integer;
+BEGIN
+    SELECT COALESCE(MAX(id_localidad), 0) + 1 INTO v_id FROM localidad;
+
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional)
+    VALUES (v_id, '55', 'Localidad CP Mal', 'Mendoza', 'Encargado Test');
+
+    RAISE EXCEPTION 'FAIL: codigo postal invalido no deberia permitirse';
+EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'OK: codigo postal invalido rechazado (23514)';
+END $$;
+
 -- =============================================================================
 -- Fin de pruebas 002_constraints.sql
 -- Los datos base de la sección 0 quedan confirmados; usar una base de pruebas.

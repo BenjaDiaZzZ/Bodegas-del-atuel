@@ -8,7 +8,12 @@ ALTER TABLE localidad
     ALTER COLUMN codigo_postal SET NOT NULL,
     ALTER COLUMN nombre        SET NOT NULL,
     ALTER COLUMN provincia     SET NOT NULL;
-    -- encargado_regional: NULL 
+    -- encargado_regional: NULL
+
+-- Código postal argentino de 4 dígitos (Anexo B). Si se adopta CPA,
+-- ampliar el patrón a '^([0-9]{4}|[A-Z][0-9]{4}[A-Z]{3})$'.
+ALTER TABLE localidad ADD CONSTRAINT ck_localidad_codigo_postal
+    CHECK (codigo_postal ~ '^[0-9]{4}$');
 
 ALTER TABLE cepa
     ALTER COLUMN nombre SET NOT NULL,
@@ -238,8 +243,10 @@ ALTER TABLE renglon_comprobante ADD CONSTRAINT ck_renglon_comprobante_cantidad
 ALTER TABLE renglon_comprobante ADD CONSTRAINT ck_renglon_comprobante_precio
     CHECK (precio_unitario > 0);
 
+-- descuento es un importe (NUMERIC(12,2)), no un porcentaje:
+-- el porcentaje vive en cliente.descuento.
 ALTER TABLE renglon_comprobante ADD CONSTRAINT ck_renglon_comprobante_descuento
-    CHECK (descuento BETWEEN 0 AND 100);
+    CHECK (descuento >= 0);
 ALTER TABLE renglon_comprobante ADD CONSTRAINT ck_renglon_comprobante_subtotal
     CHECK (subtotal >= 0);
 
@@ -275,6 +282,10 @@ ALTER TABLE auditoria_precio ALTER COLUMN fecha_hora SET DEFAULT now();
 ALTER TABLE cliente ADD CONSTRAINT uq_cliente_id_tipo
     UNIQUE (id_cliente, tipo);
 
+-- Las FK compuestas usan ON UPDATE RESTRICT: el CHECK del subtipo fija el
+-- tipo (socio/distribuidor/exportador), por lo que un CASCADE desde cliente
+-- intentaría copiar un tipo distinto y violaría ese CHECK. Para cambiar el
+-- tipo de un cliente hay que borrar primero su fila de subtipo.
 -- Socio
 ALTER TABLE socio DROP CONSTRAINT fk_socio_cliente;
 ALTER TABLE socio
@@ -282,7 +293,7 @@ ALTER TABLE socio
     ADD CONSTRAINT ck_socio_tipo CHECK (tipo = 'socio'),
     ADD CONSTRAINT fk_socio_cliente FOREIGN KEY (id_cliente, tipo)
         REFERENCES cliente (id_cliente, tipo)
-        ON DELETE CASCADE ON UPDATE CASCADE;
+        ON DELETE CASCADE ON UPDATE RESTRICT;
 
 -- Distribuidor
 ALTER TABLE distribuidor DROP CONSTRAINT fk_distribuidor_cliente;
@@ -291,7 +302,7 @@ ALTER TABLE distribuidor
     ADD CONSTRAINT ck_distribuidor_tipo CHECK (tipo = 'distribuidor'),
     ADD CONSTRAINT fk_distribuidor_cliente FOREIGN KEY (id_cliente, tipo)
         REFERENCES cliente (id_cliente, tipo)
-        ON DELETE CASCADE ON UPDATE CASCADE;
+        ON DELETE CASCADE ON UPDATE RESTRICT;
 
 -- Exportador
 ALTER TABLE exportador DROP CONSTRAINT fk_exportador_cliente;
@@ -300,6 +311,6 @@ ALTER TABLE exportador
     ADD CONSTRAINT ck_exportador_tipo CHECK (tipo = 'exportador'),
     ADD CONSTRAINT fk_exportador_cliente FOREIGN KEY (id_cliente, tipo)
         REFERENCES cliente (id_cliente, tipo)
-        ON DELETE CASCADE ON UPDATE CASCADE;
+        ON DELETE CASCADE ON UPDATE RESTRICT;
 
 COMMIT;
