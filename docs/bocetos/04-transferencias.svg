@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="titulo descripcion">
+  <title id="titulo">Boceto de transferencias entre salas</title>
+  <desc id="descripcion">Listado de transferencias y detalle con renglones, estados y acciones.</desc>
+  <rect width="1200" height="800" fill="#f4f1ea"/>
+  <rect x="0" y="0" width="1200" height="72" fill="#5b1f2a"/>
+  <text x="32" y="45" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" font-weight="bold">Bodegas del Atuel</text>
+  <text x="940" y="43" fill="#f2d7a6" font-family="Arial, sans-serif" font-size="17">Catálogo · Ventas · Reportes</text>
+
+  <text x="32" y="112" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="26" font-weight="bold">Transferencias</text>
+  <text x="32" y="140" fill="#666666" font-family="Arial, sans-serif" font-size="16">Movimientos de stock entre salas. El stock se descuenta al procesar.</text>
+  <rect x="1030" y="104" width="138" height="38" rx="6" fill="#5b1f2a"/>
+  <text x="1052" y="129" fill="#ffffff" font-family="Arial, sans-serif" font-size="14" font-weight="bold">+ Nueva transferencia</text>
+
+  <rect x="32" y="166" width="470" height="500" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="52" y="198" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">LISTADO</text>
+  <rect x="52" y="214" width="430" height="34" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="64" y="236" fill="#9a9184" font-family="Arial, sans-serif" font-size="13">Buscar por número o sala...</text>
+
+  <rect x="52" y="262" width="430" height="90" rx="8" fill="#fbf1dc" stroke="#e2c98f"/>
+  <text x="68" y="288" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">TR-0007 · Pendiente</text>
+  <text x="68" y="312" fill="#555555" font-family="Arial, sans-serif" font-size="13">Sala Principal → Sala Reserva</text>
+  <text x="68" y="334" fill="#777777" font-family="Arial, sans-serif" font-size="12">3 renglones · 24/10/2026</text>
+  <text x="430" y="334" fill="#b36b00" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Pendiente</text>
+
+  <rect x="52" y="366" width="430" height="90" rx="8" fill="#eef6ef" stroke="#b9d6bc"/>
+  <text x="68" y="392" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">TR-0006 · Procesada</text>
+  <text x="68" y="416" fill="#555555" font-family="Arial, sans-serif" font-size="13">Depósito Central → Sala Principal</text>
+  <text x="68" y="438" fill="#777777" font-family="Arial, sans-serif" font-size="12">2 renglones · 22/10/2026</text>
+  <text x="430" y="438" fill="#2f6b3a" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Procesada</text>
+
+  <rect x="52" y="470" width="430" height="90" rx="8" fill="#f4f1ea" stroke="#d8d0c2"/>
+  <text x="68" y="496" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">TR-0005 · Terminada</text>
+  <text x="68" y="520" fill="#555555" font-family="Arial, sans-serif" font-size="13">Sala Principal → Sala Eventos</text>
+  <text x="68" y="542" fill="#777777" font-family="Arial, sans-serif" font-size="12">5 renglones · 20/10/2026</text>
+  <text x="430" y="542" fill="#555555" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Terminada</text>
+
+  <rect x="52" y="574" width="430" height="72" rx="8" fill="#ffffff" stroke="#e2dbd0" stroke-dasharray="6 4"/>
+  <text x="68" y="600" fill="#8a8175" font-family="Arial, sans-serif" font-size="13">TR-0004 · Anulada</text>
+  <text x="68" y="622" fill="#8a8175" font-family="Arial, sans-serif" font-size="12">Sala Reserva → Depósito Central</text>
+
+  <rect x="526" y="166" width="642" height="500" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="550" y="198" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">DETALLE TR-0007</text>
+  <rect x="550" y="214" width="120" height="28" rx="14" fill="#fbf1dc" stroke="#e2c98f"/>
+  <text x="574" y="234" fill="#b36b00" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Pendiente</text>
+  <text x="686" y="234" fill="#777777" font-family="Arial, sans-serif" font-size="13">Creada el 24/10/2026</text>
+
+  <text x="550" y="276" fill="#666666" font-family="Arial, sans-serif" font-size="13">SALA ORIGEN</text>
+  <text x="550" y="300" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="16" font-weight="bold">Sala Principal</text>
+  <text x="800" y="276" fill="#666666" font-family="Arial, sans-serif" font-size="13">SALA DESTINO</text>
+  <text x="800" y="300" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="16" font-weight="bold">Sala Reserva</text>
+  <text x="1040" y="276" fill="#666666" font-family="Arial, sans-serif" font-size="13">RESPONSABLE</text>
+  <text x="1040" y="300" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="15">Iván M.</text>
+
+  <rect x="550" y="326" width="594" height="40" rx="6" fill="#ede6da"/>
+  <text x="566" y="351" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">VINO</text>
+  <text x="836" y="351" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">PRESENTACIÓN</text>
+  <text x="1022" y="351" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">CANTIDAD</text>
+
+  <line x1="550" y1="378" x2="1144" y2="378" stroke="#ebe5db"/>
+  <text x="566" y="404" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Malbec Reserva 2021</text>
+  <text x="836" y="404" fill="#555555" font-family="Arial, sans-serif" font-size="14">Botella 750 ml</text>
+  <text x="1022" y="404" fill="#555555" font-family="Arial, sans-serif" font-size="14">12</text>
+
+  <line x1="550" y1="430" x2="1144" y2="430" stroke="#ebe5db"/>
+  <text x="566" y="456" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Chardonnay Clásico 2023</text>
+  <text x="836" y="456" fill="#555555" font-family="Arial, sans-serif" font-size="14">Botella 750 ml</text>
+  <text x="1022" y="456" fill="#555555" font-family="Arial, sans-serif" font-size="14">6</text>
+
+  <line x1="550" y1="482" x2="1144" y2="482" stroke="#ebe5db"/>
+  <text x="566" y="508" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Rosé de Malbec 2022</text>
+  <text x="836" y="508" fill="#555555" font-family="Arial, sans-serif" font-size="14">Magnum 1,5 L</text>
+  <text x="1022" y="508" fill="#555555" font-family="Arial, sans-serif" font-size="14">6</text>
+
+  <text x="550" y="556" fill="#777777" font-family="Arial, sans-serif" font-size="13">Verificar stock antes de procesar. El procesamiento descuenta del origen y suma al destino.</text>
+
+  <rect x="550" y="590" width="130" height="38" rx="6" fill="#e9e3d8" stroke="#c9bfae"/>
+  <text x="574" y="614" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Agregar renglón</text>
+  <rect x="694" y="590" width="120" height="38" rx="6" fill="#5b1f2a"/>
+  <text x="726" y="614" fill="#ffffff" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Terminar</text>
+  <rect x="828" y="590" width="140" height="38" rx="6" fill="#2f6b3a"/>
+  <text x="858" y="614" fill="#ffffff" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Procesar</text>
+  <rect x="982" y="590" width="120" height="38" rx="6" fill="#ffffff" stroke="#a33a2b"/>
+  <text x="1014" y="614" fill="#a33a2b" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Anular</text>
+
+  <text x="32" y="750" fill="#8a8175" font-family="Arial, sans-serif" font-size="13">Boceto 4 · Transferencias · TPI Bodegas del Atuel</text>
+</svg>
