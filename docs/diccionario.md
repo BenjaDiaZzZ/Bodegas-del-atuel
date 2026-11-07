@@ -16,7 +16,8 @@ Generado a partir de `information_schema` y `pg_catalog` sobre el esquema
 
 - **Tipo**: tipo fisico en PostgreSQL.
 - **Nulo**: indica si la columna acepta `NULL`.
-- **Default**: valor por defecto; `identity` indica columna generada por identidad.
+- **Default**: valor por defecto; `identity` indica columna generada por identidad
+  y, cuando aplica, se aclara el modo (`ALWAYS` o `BY DEFAULT`).
 - **Restriccion**: `PK`, `FK -> tabla.columna`, `UNIQUE` o combinacion.
 - Los importes usan `NUMERIC(12,2)` y los porcentajes `NUMERIC(5,2)`.
 
@@ -364,7 +365,7 @@ Vinos comercializados, con tipo, anada, presentacion y precio.
 
 | Columna | Tipo | Nulo | Default | Restriccion | Descripcion funcional |
 |---|---|---|---|---|---|
-| `cod_vino` | `integer` | No | `identity` | PK | Codigo identificador del vino. |
+| `cod_vino` | `integer` | No | `identity (ALWAYS)` | PK | Codigo identificador del vino. |
 | `nombre_comercial` | `varchar(120)` | Si | `-` | - | Nombre comercial del vino. |
 | `tipo` | `varchar(12)` | Si | `-` | - | Tipo de vino: tinto, blanco, rosado o espumante. |
 | `anada` | `integer` | Si | `-` | - | Anada o ano de cosecha del vino. |

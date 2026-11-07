@@ -192,6 +192,20 @@ DELETE FROM vino
 WHERE nombre_comercial = 'Malbec Reserva' AND anada = 2020 AND presentacion_ml = 750;
 
 -- -----------------------------------------------------------------------------
+-- 5c. IDENTITY: vino.cod_vino GENERATED ALWAYS AS IDENTITY (Anexo A.2)
+-- -----------------------------------------------------------------------------
+-- 5c. Debe fallar: insercion con cod_vino explicito  -- esperado: 428C9
+DO $$
+BEGIN
+    INSERT INTO vino (cod_vino, nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES (9999, 'Vino Cod Explicito', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789');
+
+    RAISE EXCEPTION 'FAIL: cod_vino explicito no deberia permitirse';
+EXCEPTION WHEN SQLSTATE '428C9' THEN
+    RAISE NOTICE 'OK: cod_vino explicito rechazado (428C9)';
+END $$;
+
+-- -----------------------------------------------------------------------------
 -- 6. UNIQUE: cliente (tipo_documento, nro_documento)
 -- -----------------------------------------------------------------------------
 -- 6a. Primera insercion valida (queda confirmada para que 6b choque)
