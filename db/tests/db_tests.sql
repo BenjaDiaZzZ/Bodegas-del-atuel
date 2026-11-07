@@ -1,6 +1,6 @@
 -- =============================================================================
 -- db/tests/db_tests.sql · TPI «Bodegas del Atuel»
--- Pruebas manuales de constraints (Tarea 2.1 · 002_constraints.sql)
+-- Pruebas manuales de constraints y funciones (Tareas 2.1 / 2.2)
 --
 -- Ejecución sugerida:
 --   psql -v ON_ERROR_STOP=1 -f db/tests/db_tests.sql
@@ -390,6 +390,252 @@ EXCEPTION WHEN check_violation THEN
 END $$;
 
 -- =============================================================================
--- Fin de pruebas 002_constraints.sql
+-- Fin de pruebas 002_constraints.sql y 003_funciones.sql
 -- Los datos base de la sección 0 quedan confirmados; usar una base de pruebas.
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 12. Funciones de 003_funciones.sql
+-- -----------------------------------------------------------------------------
+-- 12a. Descuentos RN-06: mapeo, STRICT y mensaje/SQLSTATE exactos.
+DO $$
+DECLARE
+    v_message text;
+    v_raised  boolean := false;
+BEGIN
+    IF fn_descuento_cliente('socio') <> 10.00::numeric
+       OR fn_descuento_cliente('distribuidor') <> 20.00::numeric
+       OR fn_descuento_cliente('exportador') <> 30.00::numeric THEN
+        RAISE EXCEPTION 'FAIL: mapeo RN-06 incorrecto';
+    END IF;
+
+    IF fn_descuento_cliente(NULL::varchar) IS NOT NULL THEN
+        RAISE EXCEPTION 'FAIL: fn_descuento_cliente(NULL) debe devolver NULL';
+    END IF;
+
+    BEGIN
+        PERFORM fn_descuento_cliente('desconocido');
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_message = MESSAGE_TEXT;
+        IF v_message <> '[RN-06] Tipo de cliente desconocido: desconocido' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-06 inesperado: %', v_message;
+        END IF;
+        v_raised := true;
+    END;
+
+    IF NOT v_raised THEN
+        RAISE EXCEPTION 'FAIL: tipo de cliente desconocido debe fallar con P0001';
+    END IF;
+
+    RAISE NOTICE 'OK: fn_descuento_cliente cumple RN-06';
+END $$;
+
+-- 12b. Stock: cantidad existente y 0 cuando falta la combinación sala/vino.
+DO $$
+DECLARE
+    v_vino_con_stock integer;
+    v_vino_sin_stock integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Stock Con', 'tinto', 2022, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_con_stock;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Stock Sin', 'tinto', 2022, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_sin_stock;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad)
+    VALUES (1, v_vino_con_stock, 7);
+
+    IF fn_stock_sala(1, v_vino_con_stock) <> 7 THEN
+        RAISE EXCEPTION 'FAIL: fn_stock_sala no devolvio la cantidad almacenada';
+    END IF;
+
+    IF fn_stock_sala(1, v_vino_sin_stock) <> 0 THEN
+        RAISE EXCEPTION 'FAIL: fn_stock_sala debe devolver 0 si no hay fila';
+    END IF;
+
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino_con_stock;
+    DELETE FROM vino WHERE cod_vino IN (v_vino_con_stock, v_vino_sin_stock);
+
+    RAISE NOTICE 'OK: fn_stock_sala cumple casos con y sin fila';
+END $$;
+
+-- 12c. Antigüedad: años completos, fechas futuras acotadas a 0 y STRICT.
+DO $$
+BEGIN
+    IF fn_antiguedad_anios((CURRENT_DATE - INTERVAL '5 years')::date) <> 5
+       OR fn_antiguedad_anios((CURRENT_DATE - INTERVAL '5 years 1 day')::date) <> 5
+       OR fn_antiguedad_anios((CURRENT_DATE - INTERVAL '5 years 11 months')::date) <> 5 THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios debe contar años completos';
+    END IF;
+
+    IF fn_antiguedad_anios(CURRENT_DATE + 1) <> 0 THEN
+        RAISE EXCEPTION 'FAIL: fecha futura debe devolver 0';
+    END IF;
+
+    IF fn_antiguedad_anios(NULL::date) IS NOT NULL THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(NULL) debe devolver NULL';
+    END IF;
+
+    RAISE NOTICE 'OK: fn_antiguedad_anios cumple años completos, futuro y STRICT';
+END $$;
+
+-- 12d. Totales: vacío, una línea, tres líneas y suma de importes redondeados.
+DO $$
+DECLARE
+    v_vino_uno       integer;
+    v_vino_redondeo1 integer;
+    v_vino_redondeo2 integer;
+    v_vino_redondeo3 integer;
+    v_nro_vacio      integer;
+    v_nro_uno        integer;
+    v_nro_redondeo   integer;
+    v_nro_inexistente integer;
+    v_resultado      record;
+    v_filas          bigint;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Total Uno', 'tinto', 2022, 750, 14.00, 10.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_uno;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Total Redondeo 1', 'tinto', 2022, 750, 14.00, 0.33, '20123456789')
+    RETURNING cod_vino INTO v_vino_redondeo1;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Total Redondeo 2', 'tinto', 2022, 750, 14.00, 0.33, '20123456789')
+    RETURNING cod_vino INTO v_vino_redondeo2;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Fn Total Redondeo 3', 'tinto', 2022, 750, 14.00, 0.33, '20123456789')
+    RETURNING cod_vino INTO v_vino_redondeo3;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad)
+    VALUES
+        (1, v_vino_uno, 10),
+        (1, v_vino_redondeo1, 10),
+        (1, v_vino_redondeo2, 10),
+        (1, v_vino_redondeo3, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
+    VALUES (CURRENT_DATE, 1, 1, 0.00, 0.00, 0.00)
+    RETURNING nro_comprobante INTO v_nro_vacio;
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
+    VALUES (CURRENT_DATE, 1, 1, 0.00, 0.00, 0.00)
+    RETURNING nro_comprobante INTO v_nro_uno;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
+    VALUES (v_nro_uno, v_vino_uno, 1, 10.00, 1.00, 9.00);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
+    VALUES (CURRENT_DATE, 1, 1, 0.00, 0.00, 0.00)
+    RETURNING nro_comprobante INTO v_nro_redondeo;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
+    VALUES
+        (v_nro_redondeo, v_vino_redondeo1, 1, 0.33, 0.03, 0.30),
+        (v_nro_redondeo, v_vino_redondeo2, 1, 0.33, 0.03, 0.30),
+        (v_nro_redondeo, v_vino_redondeo3, 1, 0.33, 0.03, 0.30);
+
+    SELECT count(*) INTO v_filas FROM fn_total_comprobante(v_nro_vacio);
+    SELECT * INTO v_resultado FROM fn_total_comprobante(v_nro_vacio);
+    IF v_filas <> 1 OR v_resultado.subtotal <> 0 OR v_resultado.descuento <> 0 OR v_resultado.total <> 0 THEN
+        RAISE EXCEPTION 'FAIL: comprobante sin renglones debe devolver una fila (0, 0, 0)';
+    END IF;
+
+    SELECT count(*) INTO v_filas FROM fn_total_comprobante(NULL::integer);
+    SELECT * INTO v_resultado FROM fn_total_comprobante(NULL::integer);
+    IF v_filas <> 1 OR v_resultado.subtotal <> 0 OR v_resultado.descuento <> 0 OR v_resultado.total <> 0 THEN
+        RAISE EXCEPTION 'FAIL: p_nro NULL debe devolver ceros';
+    END IF;
+
+    SELECT COALESCE(MAX(nro_comprobante), 0) + 1
+    INTO v_nro_inexistente
+    FROM comprobante;
+    SELECT count(*) INTO v_filas FROM fn_total_comprobante(v_nro_inexistente);
+    SELECT * INTO v_resultado FROM fn_total_comprobante(v_nro_inexistente);
+    IF v_filas <> 1 OR v_resultado.subtotal <> 0 OR v_resultado.descuento <> 0 OR v_resultado.total <> 0 THEN
+        RAISE EXCEPTION 'FAIL: comprobante inexistente debe devolver una fila (0, 0, 0)';
+    END IF;
+
+    SELECT * INTO v_resultado FROM fn_total_comprobante(v_nro_uno);
+    IF v_resultado.subtotal <> 10.00 OR v_resultado.descuento <> 1.00 OR v_resultado.total <> 9.00 THEN
+        RAISE EXCEPTION 'FAIL: total de comprobante con una línea incorrecto';
+    END IF;
+
+    SELECT * INTO v_resultado FROM fn_total_comprobante(v_nro_redondeo);
+    IF v_resultado.subtotal <> 0.99 OR v_resultado.descuento <> 0.09 OR v_resultado.total <> 0.90 THEN
+        RAISE EXCEPTION 'FAIL: redondeo por línea esperado subtotal=0.99, descuento=0.09, total=0.90';
+    END IF;
+
+    UPDATE comprobante
+    SET subtotal = v_resultado.subtotal,
+        descuento = v_resultado.descuento,
+        total = v_resultado.total
+    WHERE nro_comprobante = v_nro_redondeo;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM comprobante
+        WHERE nro_comprobante = v_nro_redondeo
+          AND total = subtotal - descuento
+    ) THEN
+        RAISE EXCEPTION 'FAIL: los tres totales deben satisfacer ck_comprobante_total';
+    END IF;
+
+    DELETE FROM comprobante WHERE nro_comprobante IN (v_nro_vacio, v_nro_uno, v_nro_redondeo);
+    DELETE FROM stock_sala
+    WHERE id_sala = 1
+      AND cod_vino IN (v_vino_uno, v_vino_redondeo1, v_vino_redondeo2, v_vino_redondeo3);
+    DELETE FROM vino WHERE cod_vino IN (v_vino_uno, v_vino_redondeo1, v_vino_redondeo2, v_vino_redondeo3);
+
+    RAISE NOTICE 'OK: fn_total_comprobante cumple vacio, una línea y redondeo por línea';
+END $$;
+
+-- 12e. Verifica las propiedades declaradas en el catálogo de PostgreSQL.
+DO $$
+DECLARE
+    v_volatilidad "char";
+    v_estricta boolean;
+    v_lenguaje name;
+BEGIN
+    SELECT p.provolatile, p.proisstrict, l.lanname
+    INTO v_volatilidad, v_estricta, v_lenguaje
+    FROM pg_proc AS p
+    JOIN pg_language AS l ON l.oid = p.prolang
+    WHERE p.oid = 'fn_descuento_cliente(varchar)'::regprocedure;
+    IF NOT FOUND OR v_volatilidad <> 'i' OR NOT v_estricta OR v_lenguaje <> 'plpgsql' THEN
+        RAISE EXCEPTION 'FAIL: atributos de fn_descuento_cliente incorrectos';
+    END IF;
+
+    SELECT p.provolatile, p.proisstrict, l.lanname
+    INTO v_volatilidad, v_estricta, v_lenguaje
+    FROM pg_proc AS p
+    JOIN pg_language AS l ON l.oid = p.prolang
+    WHERE p.oid = 'fn_stock_sala(integer,integer)'::regprocedure;
+    IF NOT FOUND OR v_volatilidad <> 's' OR v_estricta OR v_lenguaje <> 'sql' THEN
+        RAISE EXCEPTION 'FAIL: atributos de fn_stock_sala incorrectos';
+    END IF;
+
+    SELECT p.provolatile, p.proisstrict, l.lanname
+    INTO v_volatilidad, v_estricta, v_lenguaje
+    FROM pg_proc AS p
+    JOIN pg_language AS l ON l.oid = p.prolang
+    WHERE p.oid = 'fn_antiguedad_anios(date)'::regprocedure;
+    IF NOT FOUND OR v_volatilidad <> 's' OR NOT v_estricta OR v_lenguaje <> 'sql' THEN
+        RAISE EXCEPTION 'FAIL: atributos de fn_antiguedad_anios incorrectos';
+    END IF;
+
+    SELECT p.provolatile, p.proisstrict, l.lanname
+    INTO v_volatilidad, v_estricta, v_lenguaje
+    FROM pg_proc AS p
+    JOIN pg_language AS l ON l.oid = p.prolang
+    WHERE p.oid = 'fn_total_comprobante(integer)'::regprocedure;
+    IF NOT FOUND OR v_volatilidad <> 's' OR v_estricta OR v_lenguaje <> 'sql' THEN
+        RAISE EXCEPTION 'FAIL: atributos de fn_total_comprobante incorrectos';
+    END IF;
+
+    RAISE NOTICE 'OK: volatilidad, STRICT y lenguaje de las cuatro funciones';
+END $$;
