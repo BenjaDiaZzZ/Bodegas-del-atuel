@@ -639,3 +639,484 @@ BEGIN
 
     RAISE NOTICE 'OK: volatilidad, STRICT y lenguaje de las cuatro funciones';
 END $$;
+
+-- -----------------------------------------------------------------------------
+-- 13. Procedimientos de 004_procedimientos.sql (RN-10 y RN-11)
+-- -----------------------------------------------------------------------------
+-- Cada caso monta sus propios datos y los limpia al final. Para los casos de
+-- error se usa un bloque BEGIN ... EXCEPTION anidado: al capturar la excepción
+-- se revierte SOLO el bloque anidado, así el montaje del bloque externo queda
+-- intacto y se puede comprobar que el documento y los stocks no cambiaron.
+-- Las comparaciones usan IS DISTINCT FROM para no pasar por alto valores NULL.
+
+-- 13a. Ingreso válido: suma stock, crea la fila ausente y pasa a procesado.
+DO $$
+DECLARE
+    v_vino_a integer;
+    v_vino_b integer;
+    v_cod    integer;
+    v_estado estado_documento;
+    v_dep_a  integer;
+    v_dep_b  integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Ing A', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_a;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Ing B', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_b;
+
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega)
+    VALUES (CURRENT_DATE, 1, '20123456789')
+    RETURNING cod_ingreso INTO v_cod;
+
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad)
+    VALUES (v_cod, v_vino_a, 5), (v_cod, v_vino_b, 3);
+
+    -- vino_a con stock previo; vino_b sin fila: el upsert debe crearla.
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino_a, 10);
+
+    CALL sp_procesar_ingreso(v_cod);
+
+    SELECT estado INTO v_estado FROM ingreso WHERE cod_ingreso = v_cod;
+    SELECT cantidad INTO v_dep_a FROM stock_deposito WHERE cod_vino = v_vino_a;
+    SELECT cantidad INTO v_dep_b FROM stock_deposito WHERE cod_vino = v_vino_b;
+
+    IF v_estado IS DISTINCT FROM 'procesado' THEN
+        RAISE EXCEPTION 'FAIL: ingreso no quedo procesado (estado=%)', v_estado;
+    END IF;
+    IF v_dep_a IS DISTINCT FROM 15 OR v_dep_b IS DISTINCT FROM 3 THEN
+        RAISE EXCEPTION 'FAIL: stock del deposito incorrecto (a=%, b=%)', v_dep_a, v_dep_b;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_ingreso suma stock (crea fila ausente) y pasa a procesado';
+
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM stock_deposito WHERE cod_vino IN (v_vino_a, v_vino_b);
+    DELETE FROM vino WHERE cod_vino IN (v_vino_a, v_vino_b);
+END $$;
+
+-- 13b. Ingreso no terminado: P0001 y nada cambia.
+DO $$
+DECLARE
+    v_vino   integer;
+    v_cod    integer;
+    v_estado estado_documento;
+    v_dep    integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Ing Mal', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega)
+    VALUES (CURRENT_DATE, 1, '20123456789')
+    RETURNING cod_ingreso INTO v_cod;
+
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 4);
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 10);
+
+    BEGIN
+        CALL sp_procesar_ingreso(v_cod);
+        RAISE EXCEPTION 'FAIL: un ingreso en_confeccion no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM ingreso WHERE cod_ingreso = v_cod;
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    IF v_estado IS DISTINCT FROM 'en_confeccion' OR v_dep IS DISTINCT FROM 10 THEN
+        RAISE EXCEPTION 'FAIL: estado/stock cambiaron (estado=%, dep=%)', v_estado, v_dep;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_ingreso rechaza estado no terminado (P0001)';
+
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13c. Ingreso repetido: el segundo CALL falla y no duplica el stock.
+DO $$
+DECLARE
+    v_vino integer;
+    v_cod  integer;
+    v_dep  integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Ing Rep', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega)
+    VALUES (CURRENT_DATE, 1, '20123456789')
+    RETURNING cod_ingreso INTO v_cod;
+
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 6);
+
+    CALL sp_procesar_ingreso(v_cod);
+
+    BEGIN
+        CALL sp_procesar_ingreso(v_cod);
+        RAISE EXCEPTION 'FAIL: reprocesar un ingreso no deberia permitirse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    IF v_dep IS DISTINCT FROM 6 THEN
+        RAISE EXCEPTION 'FAIL: el stock se duplico al reprocesar (dep=%)', v_dep;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_ingreso no reprocesa (P0001, stock intacto)';
+
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13d. Ingreso inexistente: P0002 (mapeado a 404 en docs/contratos.md).
+DO $$
+DECLARE
+    v_inexistente integer;
+BEGIN
+    SELECT COALESCE(MAX(cod_ingreso), 0) + 1 INTO v_inexistente FROM ingreso;
+
+    BEGIN
+        CALL sp_procesar_ingreso(v_inexistente);
+        RAISE EXCEPTION 'FAIL: un ingreso inexistente no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0002' THEN
+        NULL;
+    END;
+
+    RAISE NOTICE 'OK: sp_procesar_ingreso inexistente devuelve P0002';
+END $$;
+
+-- 13e. Transferencia válida: descuenta depósito, acredita sala y procesa.
+DO $$
+DECLARE
+    v_vino   integer;
+    v_nro    integer;
+    v_estado estado_documento;
+    v_dep    integer;
+    v_sala   integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr OK', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 100);
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 30);
+
+    CALL sp_procesar_transferencia(v_nro);
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    SELECT cantidad INTO v_sala FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+
+    IF v_estado IS DISTINCT FROM 'procesado'
+       OR v_dep IS DISTINCT FROM 70
+       OR v_sala IS DISTINCT FROM 30 THEN
+        RAISE EXCEPTION 'FAIL: transferencia valida (estado=%, dep=%, sala=%)', v_estado, v_dep, v_sala;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia descuenta deposito y acredita sala';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13f. Transferencia no terminada: P0001 y nada cambia.
+DO $$
+DECLARE
+    v_vino   integer;
+    v_nro    integer;
+    v_estado estado_documento;
+    v_dep    integer;
+    v_cnt    bigint;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Mal', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 100);
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'en_confeccion')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 30);
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: una transferencia en_confeccion no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    SELECT count(*) INTO v_cnt FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    IF v_estado IS DISTINCT FROM 'en_confeccion' OR v_dep IS DISTINCT FROM 100 OR v_cnt <> 0 THEN
+        RAISE EXCEPTION 'FAIL: estado/stock cambiaron (estado=%, dep=%, sala=%)', v_estado, v_dep, v_cnt;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia rechaza estado no terminado (P0001)';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13g. Transferencia repetida: el segundo CALL falla y no duplica el stock.
+DO $$
+DECLARE
+    v_vino integer;
+    v_nro  integer;
+    v_dep  integer;
+    v_sala integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Rep', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 100);
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 40);
+
+    CALL sp_procesar_transferencia(v_nro);
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: reprocesar una transferencia no deberia permitirse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    SELECT cantidad INTO v_sala FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    IF v_dep IS DISTINCT FROM 60 OR v_sala IS DISTINCT FROM 40 THEN
+        RAISE EXCEPTION 'FAIL: el stock se duplico al reprocesar (dep=%, sala=%)', v_dep, v_sala;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia no reprocesa (P0001, stock intacto)';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13h. Transferencia con vino sin fila de stock en el depósito: P0001, sin cambios.
+DO $$
+DECLARE
+    v_vino   integer;
+    v_nro    integer;
+    v_estado estado_documento;
+    v_cnt_dep bigint;
+    v_cnt_sala bigint;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Sin', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    -- Sin fila en stock_deposito: la transferencia no debe asumir 0.
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 10);
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: transferencia sin fila de deposito no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT count(*) INTO v_cnt_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    SELECT count(*) INTO v_cnt_sala FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    IF v_estado IS DISTINCT FROM 'terminado' OR v_cnt_dep <> 0 OR v_cnt_sala <> 0 THEN
+        RAISE EXCEPTION 'FAIL: estado/stocks cambiaron (estado=%, dep=%, sala=%)', v_estado, v_cnt_dep, v_cnt_sala;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia rechaza vino sin fila de deposito (P0001)';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13i. Transferencia con stock insuficiente: P0001, sin cambios.
+DO $$
+DECLARE
+    v_vino   integer;
+    v_nro    integer;
+    v_estado estado_documento;
+    v_dep    integer;
+    v_cnt_sala bigint;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Ins', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 5);
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 10);
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: transferencia con stock insuficiente no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT cantidad INTO v_dep FROM stock_deposito WHERE cod_vino = v_vino;
+    SELECT count(*) INTO v_cnt_sala FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    IF v_estado IS DISTINCT FROM 'terminado' OR v_dep IS DISTINCT FROM 5 OR v_cnt_sala <> 0 THEN
+        RAISE EXCEPTION 'FAIL: estado/stocks cambiaron (estado=%, dep=%, sala=%)', v_estado, v_dep, v_cnt_sala;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia rechaza stock insuficiente (P0001)';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 13j. Multirrenglón con falla: si un vino no tiene stock, NINGÚN vino cambia
+--      (documento y ambas tablas de stock byte a byte iguales al arranque).
+DO $$
+DECLARE
+    v_vino_a integer;
+    v_vino_b integer;
+    v_vino_c integer;
+    v_nro    integer;
+    v_estado estado_documento;
+    v_dep_a  integer;
+    v_dep_c  integer;
+    v_cnt_b  bigint;
+    v_cnt_sala bigint;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Mr A', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_a;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Mr B', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_b;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD004 Tr Mr C', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_c;
+
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino_a, 50), (v_vino_c, 50);
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
+    VALUES (v_nro, v_vino_a, 10), (v_nro, v_vino_b, 10), (v_nro, v_vino_c, 10);
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: la transferencia multirrenglon debia fallar por el vino B';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT cantidad INTO v_dep_a FROM stock_deposito WHERE cod_vino = v_vino_a;
+    SELECT cantidad INTO v_dep_c FROM stock_deposito WHERE cod_vino = v_vino_c;
+    SELECT count(*) INTO v_cnt_b FROM stock_deposito WHERE cod_vino = v_vino_b;
+    SELECT count(*) INTO v_cnt_sala
+      FROM stock_sala
+     WHERE id_sala = 1 AND cod_vino IN (v_vino_a, v_vino_b, v_vino_c);
+
+    IF v_estado IS DISTINCT FROM 'terminado'
+       OR v_dep_a IS DISTINCT FROM 50
+       OR v_dep_c IS DISTINCT FROM 50
+       OR v_cnt_b <> 0
+       OR v_cnt_sala <> 0 THEN
+        RAISE EXCEPTION 'FAIL: hubo cambios a medias (estado=%, a=%, c=%, b=%, sala=%)',
+            v_estado, v_dep_a, v_dep_c, v_cnt_b, v_cnt_sala;
+    END IF;
+
+    RAISE NOTICE 'OK: transferencia multirrenglon fallida no deja cambios a medias';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino IN (v_vino_a, v_vino_b, v_vino_c);
+    DELETE FROM stock_deposito WHERE cod_vino IN (v_vino_a, v_vino_b, v_vino_c);
+    DELETE FROM vino WHERE cod_vino IN (v_vino_a, v_vino_b, v_vino_c);
+END $$;
+
+-- 13k. Transferencia inexistente: P0002 (mapeado a 404 en docs/contratos.md).
+DO $$
+DECLARE
+    v_inexistente integer;
+BEGIN
+    SELECT COALESCE(MAX(nro_solicitud), 0) + 1 INTO v_inexistente FROM transferencia;
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_inexistente);
+        RAISE EXCEPTION 'FAIL: una transferencia inexistente no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0002' THEN
+        NULL;
+    END;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia inexistente devuelve P0002';
+END $$;
+
+-- 13l. Transferencia terminada sin renglones: P0001 y el estado no cambia.
+DO $$
+DECLARE
+    v_nro    integer;
+    v_estado estado_documento;
+BEGIN
+    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+    VALUES (1, CURRENT_DATE, 'terminado')
+    RETURNING nro_solicitud INTO v_nro;
+
+    BEGIN
+        CALL sp_procesar_transferencia(v_nro);
+        RAISE EXCEPTION 'FAIL: una transferencia sin renglones no deberia procesarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        NULL;
+    END;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    IF v_estado IS DISTINCT FROM 'terminado' THEN
+        RAISE EXCEPTION 'FAIL: el estado cambio (estado=%)', v_estado;
+    END IF;
+
+    RAISE NOTICE 'OK: sp_procesar_transferencia rechaza documento sin renglones (P0001)';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+END $$;
+
+-- =============================================================================
+-- Fin de las pruebas de procedimientos (004_procedimientos.sql)
+-- =============================================================================

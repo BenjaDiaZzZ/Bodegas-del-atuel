@@ -29,7 +29,9 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
 | `23503` | 409 / 422 | FK violada (Dato inexistente o en uso). |
 | `23514` / `23502` | 422 | CHECK o NOT NULL violado. |
 | `P0001` | 409 | Regla de negocio rechazada (RAISE EXCEPTION). |
+| `P0002` | 404 | Documento inexistente (`sp_procesar_ingreso` / `sp_procesar_transferencia`). |
 | `22P02` | 400 | Formato de texto inválido (ej. letra en un ID numérico).|
+| `55P03` | 503 | Espera de lock vencida, solo si el despliegue configura `lock_timeout`/`statement_timeout` (la base no lo hace por defecto). Reintentar. |
 | `40001` / `40P01` | 503 | Fallo de concurrencia o deadlock (Sugerir reintento). |
 
 ## 4. Flujos Operativos y Transacciones
@@ -96,7 +98,9 @@ Cualquier cambio en estas implementaciones debe ser discutido, ya que impacta en
 *   **Agregación de cabecera (`fn_total_comprobante`):** `renglon_comprobante.subtotal` es neto y ya incluye el redondeo por línea; cabecera `subtotal` = `SUM(renglon_comprobante.subtotal + renglon_comprobante.descuento)`, `total` = `SUM(renglon_comprobante.subtotal)` y `descuento` = `subtotal - total`. Sin renglones (o con `p_nro IS NULL`) devuelve una fila `(0, 0, 0)`. El consumidor debe actualizar las tres columnas de cabecera en un único `UPDATE` para satisfacer `ck_comprobante_total`.
 *   **Antigüedad:** `fn_antiguedad_anios` usa años completos (`AGE(CURRENT_DATE, p_fecha)`); fechas futuras se limitan a 0. Al ser `STRICT`, una fecha `NULL` devuelve `NULL`.
 
-### Procedimientos (Manejan el `COMMIT`/`ROLLBACK` interno en caso de error)
+### Procedimientos (El llamador es dueño de la transacción)
+Los procedimientos **no** hacen `COMMIT` ni `ROLLBACK`. La API abre la transacción (`BEGIN`) y confirma o revierte; cualquier excepción del procedimiento sube y revierte todo (estado y stocks). Un `COMMIT` interno fallaría con `SQLSTATE 2D000` cuando el `CALL` está dentro de un `BEGIN` explícito.
+
 | Procedimiento | Parámetros | Propósito |
 | :--- | :--- | :--- |
 | `sp_procesar_ingreso` | `p_cod integer` | Mueve el ingreso a procesado y suma stock al depósito. |
