@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="titulo descripcion">
+  <title id="titulo">Boceto de nueva venta</title>
+  <desc id="descripcion">Pantalla para elegir cliente, agregar renglones, aplicar descuentos y confirmar la venta.</desc>
+  <rect width="1200" height="800" fill="#f4f1ea"/>
+  <rect x="0" y="0" width="1200" height="72" fill="#5b1f2a"/>
+  <text x="32" y="45" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" font-weight="bold">Bodegas del Atuel</text>
+  <text x="940" y="43" fill="#f2d7a6" font-family="Arial, sans-serif" font-size="17">Catálogo · Ventas · Reportes</text>
+
+  <text x="32" y="112" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="26" font-weight="bold">Nueva venta</text>
+  <text x="32" y="140" fill="#666666" font-family="Arial, sans-serif" font-size="16">Comprobante en borrador. Revisá los datos antes de confirmar.</text>
+
+  <rect x="32" y="166" width="1136" height="96" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="56" y="196" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14" font-weight="bold">CLIENTE</text>
+  <rect x="56" y="208" width="330" height="36" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="68" y="231" fill="#9a9184" font-family="Arial, sans-serif" font-size="14">Buscar por nombre o documento</text>
+  <rect x="398" y="208" width="140" height="36" rx="6" fill="#e9e3d8" stroke="#c9bfae"/>
+  <text x="424" y="231" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Buscar</text>
+  <text x="570" y="231" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="15" font-weight="bold">María López · DNI 30.123.456</text>
+  <text x="570" y="250" fill="#777777" font-family="Arial, sans-serif" font-size="13">Cliente registrado · 12 compras · Descuento 5 %</text>
+  <text x="970" y="196" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14" font-weight="bold">FECHA</text>
+  <text x="970" y="231" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="15">07/11/2026</text>
+
+  <rect x="32" y="278" width="760" height="360" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="56" y="310" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">RENGLONES</text>
+  <rect x="56" y="326" width="712" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="68" y="350" fill="#9a9184" font-family="Arial, sans-serif" font-size="14">Buscar vino por nombre, cepa o código...</text>
+  <rect x="56" y="378" width="712" height="40" rx="6" fill="#ede6da"/>
+  <text x="72" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">VINO</text>
+  <text x="360" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">PRESENTACIÓN</text>
+  <text x="500" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">CANT.</text>
+  <text x="570" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">PRECIO</text>
+  <text x="660" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">SUBTOTAL</text>
+  <text x="748" y="403" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13" font-weight="bold">×</text>
+
+  <line x1="56" y1="430" x2="768" y2="430" stroke="#ebe5db"/>
+  <text x="72" y="456" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Malbec Reserva 2021</text>
+  <text x="360" y="456" fill="#555555" font-family="Arial, sans-serif" font-size="14">Botella 750 ml</text>
+  <text x="510" y="456" fill="#555555" font-family="Arial, sans-serif" font-size="14">2</text>
+  <text x="570" y="456" fill="#555555" font-family="Arial, sans-serif" font-size="14">$ 8.500</text>
+  <text x="660" y="456" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14" font-weight="bold">$ 17.000</text>
+  <text x="748" y="456" fill="#a33a2b" font-family="Arial, sans-serif" font-size="16">×</text>
+
+  <line x1="56" y1="482" x2="768" y2="482" stroke="#ebe5db"/>
+  <text x="72" y="508" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Chardonnay Clásico 2023</text>
+  <text x="360" y="508" fill="#555555" font-family="Arial, sans-serif" font-size="14">Botella 750 ml</text>
+  <text x="510" y="508" fill="#555555" font-family="Arial, sans-serif" font-size="14">1</text>
+  <text x="570" y="508" fill="#555555" font-family="Arial, sans-serif" font-size="14">$ 6.200</text>
+  <text x="660" y="508" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14" font-weight="bold">$ 6.200</text>
+  <text x="748" y="508" fill="#a33a2b" font-family="Arial, sans-serif" font-size="16">×</text>
+
+  <line x1="56" y1="534" x2="768" y2="534" stroke="#ebe5db"/>
+  <text x="72" y="560" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14">Rosé de Malbec 2022</text>
+  <text x="360" y="560" fill="#555555" font-family="Arial, sans-serif" font-size="14">Botella 750 ml</text>
+  <text x="510" y="560" fill="#555555" font-family="Arial, sans-serif" font-size="14">3</text>
+  <text x="570" y="560" fill="#555555" font-family="Arial, sans-serif" font-size="14">$ 7.100</text>
+  <text x="660" y="560" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14" font-weight="bold">$ 21.300</text>
+  <text x="748" y="560" fill="#a33a2b" font-family="Arial, sans-serif" font-size="16">×</text>
+
+  <text x="56" y="612" fill="#777777" font-family="Arial, sans-serif" font-size="13">Stock disponible: Malbec 24 · Chardonnay 7 · Rosé 0</text>
+
+  <rect x="812" y="278" width="356" height="360" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="836" y="310" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">RESUMEN</text>
+  <text x="836" y="348" fill="#555555" font-family="Arial, sans-serif" font-size="14">Subtotal</text>
+  <text x="1090" y="348" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14" text-anchor="end">$ 44.500</text>
+  <text x="836" y="382" fill="#555555" font-family="Arial, sans-serif" font-size="14">Descuento cliente (5 %)</text>
+  <text x="1090" y="382" fill="#2f6b3a" font-family="Arial, sans-serif" font-size="14" text-anchor="end">- $ 2.225</text>
+  <text x="836" y="416" fill="#555555" font-family="Arial, sans-serif" font-size="14">Impuestos</text>
+  <text x="1090" y="416" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="14" text-anchor="end">$ 0</text>
+  <line x1="836" y1="438" x2="1144" y2="438" stroke="#d8d0c2"/>
+  <text x="836" y="474" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="17" font-weight="bold">TOTAL</text>
+  <text x="1144" y="474" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="22" font-weight="bold" text-anchor="end">$ 42.275</text>
+
+  <text x="836" y="520" fill="#444444" font-family="Arial, sans-serif" font-size="14">Forma de pago</text>
+  <rect x="836" y="532" width="308" height="36" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="848" y="555" fill="#9a9184" font-family="Arial, sans-serif" font-size="14">Efectivo / Tarjeta / Transferencia</text>
+
+  <rect x="836" y="586" width="308" height="40" rx="6" fill="#5b1f2a"/>
+  <text x="952" y="611" fill="#ffffff" font-family="Arial, sans-serif" font-size="15" font-weight="bold">Confirmar venta</text>
+
+  <text x="32" y="750" fill="#8a8175" font-family="Arial, sans-serif" font-size="13">Boceto 3 · Nueva venta · TPI Bodegas del Atuel</text>
+</svg>
