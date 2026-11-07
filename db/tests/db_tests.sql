@@ -281,6 +281,8 @@ END $$;
 -- 9. CHECK: renglon_comprobante.descuento >= 0 (importe, no porcentaje)
 -- -----------------------------------------------------------------------------
 -- 9a. Debe funcionar: descuento = 150.00 (mayor a 100, pero es un importe)
+-- El trigger BEFORE de 005 completa la linea en el INSERT; el limite del CHECK
+-- se ejercita con un UPDATE posterior (no hay trigger de UPDATE sobre renglones).
 DO $$
 DECLARE
     v_cod integer;
@@ -290,20 +292,28 @@ BEGIN
     VALUES ('Vino Descuento OK', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
     RETURNING cod_vino INTO v_cod;
 
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_cod, 10);
+
     INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
     VALUES ('2024-06-01', 1, 1, 1000.00, 0.00, 1000.00)
     RETURNING nro_comprobante INTO v_nro;
 
-    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
-    VALUES (v_nro, v_cod, 1, 1000.00, 150.00, 850.00);
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_nro, v_cod, 1);
+
+    UPDATE renglon_comprobante
+       SET descuento = 150.00, subtotal = 850.00
+     WHERE nro_comprobante = v_nro AND cod_vino = v_cod;
 
     RAISE NOTICE 'OK: descuento 150.00 aceptado como importe';
 
     DELETE FROM comprobante WHERE nro_comprobante = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_cod;
     DELETE FROM vino WHERE cod_vino = v_cod;
 END $$;
 
 -- 9b. Debe fallar: descuento = -1  -- esperado: 23514
+-- El INSERT lo completa el trigger de 005; el CHECK se prueba con un UPDATE.
 DO $$
 DECLARE
     v_cod integer;
@@ -313,17 +323,28 @@ BEGIN
     VALUES ('Vino Descuento Mal', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
     RETURNING cod_vino INTO v_cod;
 
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_cod, 10);
+
     INSERT INTO comprobante (fecha, id_cliente, id_sala, subtotal, descuento, total)
     VALUES ('2024-06-01', 1, 1, 1000.00, 0.00, 1000.00)
     RETURNING nro_comprobante INTO v_nro;
 
-    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad, precio_unitario, descuento, subtotal)
-    VALUES (v_nro, v_cod, 1, 1000.00, -1.00, 1001.00);
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_nro, v_cod, 1);
 
-    RAISE EXCEPTION 'FAIL: descuento negativo no deberia permitirse';
-EXCEPTION WHEN check_violation THEN
-    -- El bloque se revierte completo: el vino y el comprobante tampoco persisten.
-    RAISE NOTICE 'OK: descuento negativo rechazado (23514)';
+    BEGIN
+        UPDATE renglon_comprobante
+           SET descuento = -1.00
+         WHERE nro_comprobante = v_nro AND cod_vino = v_cod;
+
+        RAISE EXCEPTION 'FAIL: descuento negativo no deberia permitirse';
+    EXCEPTION WHEN check_violation THEN
+        RAISE NOTICE 'OK: descuento negativo rechazado (23514)';
+    END;
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_cod;
+    DELETE FROM vino WHERE cod_vino = v_cod;
 END $$;
 
 -- -----------------------------------------------------------------------------
@@ -671,10 +692,11 @@ BEGIN
     VALUES (CURRENT_DATE, 1, '20123456789')
     RETURNING cod_ingreso INTO v_cod;
 
-    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
-
+    -- RN-12: los renglones se cargan con el documento en en_confeccion.
     INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad)
     VALUES (v_cod, v_vino_a, 5), (v_cod, v_vino_b, 3);
+
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
 
     -- vino_a con stock previo; vino_b sin fila: el upsert debe crearla.
     INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino_a, 10);
@@ -753,8 +775,9 @@ BEGIN
     VALUES (CURRENT_DATE, 1, '20123456789')
     RETURNING cod_ingreso INTO v_cod;
 
-    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    -- RN-12: el renglon se carga antes de pasar a terminado.
     INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 6);
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
 
     CALL sp_procesar_ingreso(v_cod);
 
@@ -809,11 +832,14 @@ BEGIN
 
     INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 100);
 
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    -- D2: el INSERT solo acepta en_confeccion; el renglon se carga antes de
+    -- pasar a terminado (RN-12).
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
 
     INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 30);
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     CALL sp_procesar_transferencia(v_nro);
 
@@ -892,11 +918,12 @@ BEGIN
 
     INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 100);
 
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
 
     INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 40);
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     CALL sp_procesar_transferencia(v_nro);
 
@@ -935,11 +962,12 @@ BEGIN
     RETURNING cod_vino INTO v_vino;
 
     -- Sin fila en stock_deposito: la transferencia no debe asumir 0.
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
 
     INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 10);
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     BEGIN
         CALL sp_procesar_transferencia(v_nro);
@@ -978,11 +1006,12 @@ BEGIN
 
     INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 5);
 
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
 
     INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 10);
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     BEGIN
         CALL sp_procesar_transferencia(v_nro);
@@ -1034,12 +1063,14 @@ BEGIN
 
     INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino_a, 50), (v_vino_c, 50);
 
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
 
     INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
     VALUES (v_nro, v_vino_a, 10), (v_nro, v_vino_b, 10), (v_nro, v_vino_c, 10);
+
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     BEGIN
         CALL sp_procesar_transferencia(v_nro);
@@ -1096,9 +1127,11 @@ DECLARE
     v_nro    integer;
     v_estado estado_documento;
 BEGIN
-    INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-    VALUES (1, CURRENT_DATE, 'terminado')
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
     RETURNING nro_solicitud INTO v_nro;
+
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
 
     BEGIN
         CALL sp_procesar_transferencia(v_nro);

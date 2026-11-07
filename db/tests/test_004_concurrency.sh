@@ -3,9 +3,16 @@
 # test_004_concurrency.sh · TPI «Bodegas del Atuel»
 # Regresion de concurrencia de sp_procesar_transferencia (RN-11).
 #
-# Objetivo (TOCTOU): el conjunto (cod_vino, cantidad) que el procedimiento
-# valida debe ser EXACTAMENTE el conjunto que resta del deposito y suma a la
-# sala, aunque otra sesion edite renglon_transferencia en paralelo.
+# Objetivo original (TOCTOU): el conjunto (cod_vino, cantidad) que el
+# procedimiento valida debe ser EXACTAMENTE el conjunto que resta del deposito y
+# suma a la sala, aunque otra sesion intente editar renglon_transferencia en
+# paralelo.
+#
+# Con los triggers de 005 (RN-12) la edicion concurrente ya no puede prosperar:
+# un documento 'terminado' tiene sus renglones bloqueados, asi que la sesion B
+# recibe [RN-12] y la sesion A sigue procesando el conjunto que valido (10).
+# Este script ahora verifica AMBAS cosas: B es rechazada por RN-12 y el resultado
+# final sigue siendo 90 / 10 / procesado.
 #
 # Metodo (interfaz publica, sin tocar el procedimiento):
 #   1. La sesion C bloquea la fila stock_deposito del vino A (FOR UPDATE) y la
@@ -13,15 +20,14 @@
 #   2. La sesion A ejecuta CALL sp_procesar_transferencia. En la version con la
 #      proteccion, A queda esperando el lock del deposito; en la version con la
 #      carrera, A ya leyo los renglones pero todavia no escribio.
-#   3. Con A esperando, la sesion B edita la cantidad del renglon (10 -> 30) y
-#      confirma.
+#   3. Con A esperando, la sesion B intenta editar la cantidad del renglon
+#      (10 -> 30): RN-12 la rechaza (P0001) porque el documento esta terminado.
 #   4. C libera el lock; A termina.
 #
-# Resultado esperado (GREEN): A proceso la cantidad que tenia bloqueada (10):
-#   stock_deposito = 90 y stock_sala = 10. Con la carrera (RED), A re-lee el
-#   renglon ya editado y descuenta 30: stock_deposito = 70 y stock_sala = 30.
+# Resultado esperado (GREEN): B rechazada por [RN-12]; A proceso la cantidad que
+# tenia bloqueada (10): stock_deposito = 90 y stock_sala = 10.
 #
-# Requiere una base con las migraciones 001-004 aplicadas. Usa las variables
+# Requiere una base con las migraciones 001-005 aplicadas. Usa las variables
 # estandar de libpq (PGHOST, PGPORT, PGUSER, PGDATABASE).
 #
 # Uso:
@@ -30,12 +36,13 @@
 set -euo pipefail
 
 PSQL=(psql -X -q -v ON_ERROR_STOP=1)
+NRO=""
 
 cleanup() {
-    "${PSQL[@]}" >/dev/null 2>&1 <<'SQL' || true
+    "${PSQL[@]}" >/dev/null 2>&1 <<SQL || true
 DELETE FROM stock_sala     WHERE id_sala = 1 AND cod_vino IN (SELECT cod_vino FROM vino WHERE nombre_comercial IN ('JD004 A','JD004 B'));
 DELETE FROM stock_deposito WHERE cod_vino IN (SELECT cod_vino FROM vino WHERE nombre_comercial IN ('JD004 A','JD004 B'));
-DELETE FROM transferencia  WHERE nro_solicitud IN (SELECT nro_solicitud FROM transferencia WHERE id_sala = 1 AND fecha_confeccion = DATE '2099-12-31');
+DELETE FROM transferencia  WHERE nro_solicitud = ${NRO:-0};
 DELETE FROM vino           WHERE nombre_comercial IN ('JD004 A','JD004 B');
 SQL
 }
@@ -69,19 +76,18 @@ INSERT INTO stock_deposito (cod_vino, cantidad)
 SELECT cod_vino, 100 FROM vino WHERE nombre_comercial = 'JD004 A';
 INSERT INTO stock_deposito (cod_vino, cantidad)
 SELECT cod_vino, 100 FROM vino WHERE nombre_comercial = 'JD004 B';
-
-INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
-VALUES (1, DATE '2099-12-31', 'terminado');
-
-INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
-SELECT t.nro_solicitud, v.cod_vino, 10
-FROM transferencia t, vino v
-WHERE t.id_sala = 1 AND t.fecha_confeccion = DATE '2099-12-31'
-  AND v.nombre_comercial = 'JD004 A';
 SQL
 
-NRO=$("${PSQL[@]}" -tAc "SELECT nro_solicitud FROM transferencia WHERE id_sala = 1 AND fecha_confeccion = DATE '2099-12-31'")
+# D2: el INSERT solo acepta en_confeccion (default). El renglon se carga con el
+# documento en confeccion y recien despues se pasa a terminado (RN-12).
+NRO=$("${PSQL[@]}" -tAc "INSERT INTO transferencia (id_sala) VALUES (1) RETURNING nro_solicitud")
 VINO_A=$("${PSQL[@]}" -tAc "SELECT cod_vino FROM vino WHERE nombre_comercial = 'JD004 A'")
+
+"${PSQL[@]}" >/dev/null -c "
+INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
+VALUES ($NRO, $VINO_A, 10);
+UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = $NRO;
+"
 echo "nro_solicitud=$NRO vino_A=$VINO_A"
 
 echo "== sesion C: bloquea stock_deposito del vino A =="
@@ -106,8 +112,17 @@ if [ "$blocked" -ne 1 ]; then
 fi
 echo "sesion A bloqueada en un lock"
 
-echo "== sesion B: edita el renglon (10 -> 30) y confirma =="
-PGAPPNAME=jd004_B "${PSQL[@]}" -c "UPDATE renglon_transferencia SET cantidad = 30 WHERE nro_solicitud = $NRO AND cod_vino = $VINO_A;" >/dev/null
+echo "== sesion B: intenta editar el renglon (10 -> 30); RN-12 lo rechaza =="
+set +e
+B_ERR=$(PGAPPNAME=jd004_B "${PSQL[@]}" -c "UPDATE renglon_transferencia SET cantidad = 30 WHERE nro_solicitud = $NRO AND cod_vino = $VINO_A;" 2>&1)
+B_RC=$?
+set -e
+if [ "$B_RC" -eq 0 ] || ! printf '%s' "$B_ERR" | grep -q '\[RN-12\]'; then
+    echo "FAIL: la edicion concurrente no fue rechazada por RN-12 (rc=$B_RC): $B_ERR" >&2
+    kill "$C_PID" "$A_PID" 2>/dev/null || true
+    exit 1
+fi
+echo "RN-12 rechazo la edicion concurrente: OK"
 
 wait "$C_PID"
 wait "$A_PID"
@@ -118,7 +133,7 @@ ESTADO=$("${PSQL[@]}" -tAc "SELECT estado FROM transferencia WHERE nro_solicitud
 echo "stock_deposito=$DEP stock_sala=$SALA estado=$ESTADO (esperado: 90 / 10 / procesado)"
 
 if [ "$DEP" = "90" ] && [ "$SALA" = "10" ] && [ "$ESTADO" = "procesado" ]; then
-    echo "OK: el procedimiento consumio el conjunto que valido (10), no el editado (30)"
+    echo "OK: RN-12 bloqueo la edicion y el procedimiento consumio el conjunto que valido (10)"
     exit 0
 fi
 
