@@ -1345,3 +1345,210 @@ BEGIN
 
     DELETE FROM transferencia WHERE nro_solicitud = v_nro;
 END $$;
+
+-- 14.8 RN-05-a · Composicion 40 + 60: el vino nuevo pasa la validacion diferida
+DO $$
+DECLARE
+    v_vino integer;
+    v_suma numeric(5,2);
+BEGIN
+    INSERT INTO cepa (id_cepa, nombre, tipo)
+    VALUES (902601, 'T26W2 Cepa A', 'tinta'),
+           (902602, 'T26W2 Cepa B', 'tinta');
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W2 RN05-a Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902601, 40.00);
+    INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902602, 60.00);
+
+    SELECT SUM(porcentaje) INTO v_suma
+      FROM composicion
+     WHERE cod_vino = v_vino;
+
+    IF v_suma IS DISTINCT FROM 100.00 THEN
+        RAISE EXCEPTION 'FAIL: la composicion suma % y no 100.00', v_suma;
+    END IF;
+
+    RAISE NOTICE 'OK RN-05-a: composicion 40 + 60 suma 100 sin error';
+
+    -- El CASCADE de composicion se lleva las dos filas.
+    DELETE FROM vino WHERE cod_vino = v_vino;
+    DELETE FROM cepa WHERE id_cepa IN (902601, 902602);
+END $$;
+
+-- 14.9 RN-05-b · Composicion 60 + 30: la validacion diferida rechaza el vino
+-- esperado: P0001 al COMMIT (aqui forzado con SET CONSTRAINTS IMMEDIATE)
+DO $$
+DECLARE
+    v_vino      integer;
+    v_msg       text;
+    v_restantes integer;
+BEGIN
+    INSERT INTO cepa (id_cepa, nombre, tipo)
+    VALUES (902603, 'T26W2 Cepa C', 'tinta'),
+           (902604, 'T26W2 Cepa D', 'tinta');
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W2 RN05-b Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    BEGIN
+        INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902603, 60.00);
+        INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902604, 30.00);
+        -- Adelanta el disparo diferido al punto actual del bloque.
+        SET CONSTRAINTS tg_composicion_cien IMMEDIATE;
+        RAISE EXCEPTION 'FAIL: composicion 60 + 30 no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg NOT LIKE '[RN-05]%' THEN
+            RAISE EXCEPTION 'FAIL: falta el prefijo [RN-05]: %', v_msg;
+        END IF;
+        IF v_msg <> format('[RN-05] La composicion del vino %s suma 90.00, debe sumar 100', v_vino) THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    -- El rollback del sub-bloque deshace las dos filas de composicion.
+    SELECT count(*) INTO v_restantes
+      FROM composicion
+     WHERE cod_vino = v_vino;
+    IF v_restantes <> 0 THEN
+        RAISE EXCEPTION 'FAIL: el sub-bloque dejo % filas de composicion', v_restantes;
+    END IF;
+
+    RAISE NOTICE 'OK RN-05-b: composicion 60 + 30 rechazada con [RN-05] al forzar el trigger';
+
+    DELETE FROM vino WHERE cod_vino = v_vino;
+    DELETE FROM cepa WHERE id_cepa IN (902603, 902604);
+END $$;
+
+-- 14.10 RN-05-c · Composicion diferida: 60 solo no falla y completar con 40 tampoco
+DO $$
+DECLARE
+    v_vino integer;
+    v_suma numeric(5,2);
+BEGIN
+    INSERT INTO cepa (id_cepa, nombre, tipo)
+    VALUES (902605, 'T26W2 Cepa E', 'tinta'),
+           (902606, 'T26W2 Cepa F', 'tinta');
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W2 RN05-c Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    -- Si la validacion fuera inmediata, este INSERT fallaria: la regla difiere.
+    -- El COMMIT real de la transaccion ejecuta el mismo chequeo P0001 cuando la
+    -- suma final es distinta de 100; aqui el bloque sigue y la completa.
+    INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902605, 60.00);
+
+    -- Segunda cepa: la composicion queda completa y el bloque no fallo.
+    INSERT INTO composicion (cod_vino, id_cepa, porcentaje) VALUES (v_vino, 902606, 40.00);
+
+    SELECT SUM(porcentaje) INTO v_suma
+      FROM composicion
+     WHERE cod_vino = v_vino;
+
+    IF v_suma IS DISTINCT FROM 100.00 THEN
+        RAISE EXCEPTION 'FAIL: la composicion suma % y no 100.00', v_suma;
+    END IF;
+
+    RAISE NOTICE 'OK RN-05-c: la validacion difiere; 60 solo no fallo y 40 lo completo';
+
+    DELETE FROM vino WHERE cod_vino = v_vino;
+    DELETE FROM cepa WHERE id_cepa IN (902605, 902606);
+END $$;
+
+-- 14.11 RN-06-a · Descuento por tipo de cliente: mapeo exacto y NULL (STRICT)
+DO $$
+DECLARE
+    v_socio        numeric(5,2);
+    v_distribuidor numeric(5,2);
+    v_exportador   numeric(5,2);
+BEGIN
+    v_socio        := fn_descuento_cliente('socio');
+    v_distribuidor := fn_descuento_cliente('distribuidor');
+    v_exportador   := fn_descuento_cliente('exportador');
+
+    IF v_socio IS DISTINCT FROM 10.00 THEN
+        RAISE EXCEPTION 'FAIL: socio devuelve % y no 10.00', v_socio;
+    END IF;
+    IF v_distribuidor IS DISTINCT FROM 20.00 THEN
+        RAISE EXCEPTION 'FAIL: distribuidor devuelve % y no 20.00', v_distribuidor;
+    END IF;
+    IF v_exportador IS DISTINCT FROM 30.00 THEN
+        RAISE EXCEPTION 'FAIL: exportador devuelve % y no 30.00', v_exportador;
+    END IF;
+    IF fn_descuento_cliente(NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'FAIL: NULL deberia devolver NULL (STRICT)';
+    END IF;
+
+    RAISE NOTICE 'OK RN-06-a: socio 10.00, distribuidor 20.00, exportador 30.00 y NULL';
+END $$;
+
+-- 14.12 RN-06-b · Descuento por tipo de cliente: tipo desconocido rechazado
+-- esperado: P0001
+DO $$
+DECLARE
+    v_msg text;
+BEGIN
+    BEGIN
+        PERFORM fn_descuento_cliente('desconocido');
+        RAISE EXCEPTION 'FAIL: tipo de cliente desconocido no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-06] Tipo de cliente desconocido: desconocido' THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    RAISE NOTICE 'OK RN-06-b: tipo desconocido rechazado con el mensaje exacto de RN-06';
+END $$;
+
+-- 14.13 RN-07-a · Permiso de exportacion con vencimiento posterior a la emision
+DO $$
+BEGIN
+    INSERT INTO permiso_exportacion (id_cliente, cod_permiso, fecha_emision, fecha_vencimiento)
+    VALUES (2, 'T26W2-RN07A', '2024-01-01', '2025-01-01');
+
+    RAISE NOTICE 'OK RN-07-a: vencimiento posterior a la emision aceptado';
+
+    DELETE FROM permiso_exportacion WHERE id_cliente = 2 AND cod_permiso = 'T26W2-RN07A';
+END $$;
+
+-- 14.14 RN-07-b · Permiso con vencimiento anterior o igual a la emision
+-- esperado: 23514
+DO $$
+DECLARE
+    v_constraint text;
+BEGIN
+    -- Variante 1: vencimiento anterior a la emision.
+    BEGIN
+        INSERT INTO permiso_exportacion (id_cliente, cod_permiso, fecha_emision, fecha_vencimiento)
+        VALUES (2, 'T26W2-RN07B1', '2025-01-01', '2024-01-01');
+        RAISE EXCEPTION 'FAIL: vencimiento anterior a la emision no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN check_violation THEN
+        GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+        IF v_constraint IS DISTINCT FROM 'ck_permiso_fechas' THEN
+            RAISE EXCEPTION 'FAIL: constraint inesperado: %', v_constraint;
+        END IF;
+    END;
+
+    -- Variante 2: vencimiento igual a la emision.
+    BEGIN
+        INSERT INTO permiso_exportacion (id_cliente, cod_permiso, fecha_emision, fecha_vencimiento)
+        VALUES (2, 'T26W2-RN07B2', '2025-01-01', '2025-01-01');
+        RAISE EXCEPTION 'FAIL: vencimiento igual a la emision no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN check_violation THEN
+        GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+        IF v_constraint IS DISTINCT FROM 'ck_permiso_fechas' THEN
+            RAISE EXCEPTION 'FAIL: constraint inesperado: %', v_constraint;
+        END IF;
+    END;
+
+    RAISE NOTICE 'OK RN-07-b: vencimiento anterior o igual a la emision rechazado por ck_permiso_fechas';
+
+    DELETE FROM permiso_exportacion
+     WHERE id_cliente = 2 AND cod_permiso IN ('T26W2-RN07B1', 'T26W2-RN07B2');
+END $$;
