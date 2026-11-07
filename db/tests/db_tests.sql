@@ -1552,3 +1552,253 @@ BEGIN
     DELETE FROM permiso_exportacion
      WHERE id_cliente = 2 AND cod_permiso IN ('T26W2-RN07B1', 'T26W2-RN07B2');
 END $$;
+
+-- 14.15 RN-08-a · Calculo de importes de linea y de cabecera: socio 10 % y redondeo
+DO $$
+DECLARE
+    v_vino1 integer;
+    v_vino2 integer;
+    v_cb1   integer;
+    v_cb2   integer;
+    v_prec  numeric(12,2);
+    v_desc  numeric(12,2);
+    v_sub   numeric(12,2);
+    v_cab   record;
+BEGIN
+    -- Caso base: precio 1000.00, cantidad 3, cliente socio (10 %).
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W3 RN08-a Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino1;
+
+    -- Variante de redondeo: precio 0.33, cantidad 1.
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W3 RN08-a Redondeo', 'tinto', 2020, 750, 14.00, 0.33, '20123456789')
+    RETURNING cod_vino INTO v_vino2;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad)
+    VALUES (1, v_vino1, 10), (1, v_vino2, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb1;
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb2;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb1, v_vino1, 3);
+
+    SELECT precio_unitario, descuento, subtotal
+      INTO v_prec, v_desc, v_sub
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb1 AND cod_vino = v_vino1;
+
+    IF v_prec IS DISTINCT FROM 1000.00 THEN
+        RAISE EXCEPTION 'FAIL: precio_unitario es % y no 1000.00', v_prec;
+    END IF;
+    IF v_desc IS DISTINCT FROM 300.00 THEN
+        RAISE EXCEPTION 'FAIL: descuento de linea es % y no 300.00', v_desc;
+    END IF;
+    IF v_sub IS DISTINCT FROM 2700.00 THEN
+        RAISE EXCEPTION 'FAIL: subtotal de linea es % y no 2700.00', v_sub;
+    END IF;
+
+    -- T2 recalcula la cabecera: 3000.00, 300.00, 2700.00.
+    SELECT subtotal, descuento, total INTO v_cab
+      FROM comprobante
+     WHERE nro_comprobante = v_cb1;
+
+    IF v_cab.subtotal IS DISTINCT FROM 3000.00
+       OR v_cab.descuento IS DISTINCT FROM 300.00
+       OR v_cab.total IS DISTINCT FROM 2700.00 THEN
+        RAISE EXCEPTION 'FAIL: cabecera (%, %, %) distinta de (3000.00, 300.00, 2700.00)',
+            v_cab.subtotal, v_cab.descuento, v_cab.total;
+    END IF;
+
+    -- ck_comprobante_total exige total = subtotal - descuento.
+    IF v_cab.total IS DISTINCT FROM (v_cab.subtotal - v_cab.descuento) THEN
+        RAISE EXCEPTION 'FAIL: ck_comprobante_total no se cumple en la cabecera';
+    END IF;
+
+    -- Variante de redondeo: 0.33 * 10 % = 0.033 -> 0.03; subtotal 0.30.
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb2, v_vino2, 1);
+
+    SELECT precio_unitario, descuento, subtotal
+      INTO v_prec, v_desc, v_sub
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb2 AND cod_vino = v_vino2;
+
+    IF v_prec IS DISTINCT FROM 0.33 THEN
+        RAISE EXCEPTION 'FAIL: precio_unitario de redondeo es % y no 0.33', v_prec;
+    END IF;
+    IF v_desc IS DISTINCT FROM 0.03 THEN
+        RAISE EXCEPTION 'FAIL: descuento de redondeo es % y no 0.03', v_desc;
+    END IF;
+    IF v_sub IS DISTINCT FROM 0.30 THEN
+        RAISE EXCEPTION 'FAIL: subtotal de redondeo es % y no 0.30', v_sub;
+    END IF;
+
+    RAISE NOTICE 'OK RN-08-a: lineas y cabecera calculadas con socio del 10 por ciento y redondeo a 2 decimales';
+
+    -- Los renglones caen con el CASCADE de comprobante.
+    DELETE FROM comprobante WHERE nro_comprobante IN (v_cb1, v_cb2);
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino IN (v_vino1, v_vino2);
+    DELETE FROM vino WHERE cod_vino IN (v_vino1, v_vino2);
+END $$;
+
+-- 14.16 RN-08-b · Calculo de importes: N/A justificado
+-- esperado: sin caso de falla; ver plan_tests_26.md §5 RN-08
+DO $$
+BEGIN
+    RAISE NOTICE 'OK RN-08-b: sin caso de falla; los limites los fijan los CHECK de 002';
+END $$;
+
+-- 14.17 RN-09-a · Stock suficiente: vender exactamente el disponible
+DO $$
+DECLARE
+    v_vino  integer;
+    v_cb    integer;
+    v_disp  integer;
+    v_cab   record;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W3 RN09-a Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_vino, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb, v_vino, 10);
+
+    -- T2 descuenta el stock vendido.
+    SELECT cantidad INTO v_disp
+      FROM stock_sala
+     WHERE id_sala = 1 AND cod_vino = v_vino;
+
+    IF v_disp IS DISTINCT FROM 0 THEN
+        RAISE EXCEPTION 'FAIL: el stock quedo en % y no en 0', v_disp;
+    END IF;
+
+    -- Cabecera: bruto 10000.00, descuento socio 1000.00, total 9000.00.
+    SELECT subtotal, descuento, total INTO v_cab
+      FROM comprobante
+     WHERE nro_comprobante = v_cb;
+
+    IF v_cab.subtotal IS DISTINCT FROM 10000.00
+       OR v_cab.descuento IS DISTINCT FROM 1000.00
+       OR v_cab.total IS DISTINCT FROM 9000.00 THEN
+        RAISE EXCEPTION 'FAIL: cabecera (%, %, %) distinta de (10000.00, 1000.00, 9000.00)',
+            v_cab.subtotal, v_cab.descuento, v_cab.total;
+    END IF;
+
+    RAISE NOTICE 'OK RN-09-a: venta del stock justo aceptada; stock en 0 y cabecera cuadrada';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 14.18 RN-09-b · Stock insuficiente: vender 11 con 10 disponibles
+-- esperado: P0001
+DO $$
+DECLARE
+    v_vino   integer;
+    v_cb     integer;
+    v_msg    text;
+    v_disp   integer;
+    v_cnt    integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W3 RN09-b Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_vino, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    BEGIN
+        INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+        VALUES (v_cb, v_vino, 11);
+        RAISE EXCEPTION 'FAIL: vender 11 con stock 10 no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg NOT LIKE '[RN-09] %' THEN
+            RAISE EXCEPTION 'FAIL: falta el prefijo [RN-09]: %', v_msg;
+        END IF;
+        IF v_msg <> format('[RN-09] Stock insuficiente del vino %s en la sala %s: disponible %s, solicitado %s',
+                            v_vino, 1, 10, 11) THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    -- El sub-bloque revierte: stock intacto y comprobante sin renglones.
+    SELECT cantidad INTO v_disp
+      FROM stock_sala
+     WHERE id_sala = 1 AND cod_vino = v_vino;
+
+    IF v_disp IS DISTINCT FROM 10 THEN
+        RAISE EXCEPTION 'FAIL: el stock quedo en % y no en 10', v_disp;
+    END IF;
+
+    SELECT count(*) INTO v_cnt
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb;
+
+    IF v_cnt <> 0 THEN
+        RAISE EXCEPTION 'FAIL: el comprobante quedo con % renglones', v_cnt;
+    END IF;
+
+    RAISE NOTICE 'OK RN-09-b: venta de 11 con stock 10 rechazada con [RN-09]; nada cambio';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 14.19 RN-09-c · Stock insuficiente: vino sin fila en stock_sala (disponible 0)
+-- esperado: P0001
+DO $$
+DECLARE
+    v_vino integer;
+    v_cb   integer;
+    v_msg  text;
+    v_cnt  integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W3 RN09-c Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    BEGIN
+        INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+        VALUES (v_cb, v_vino, 1);
+        RAISE EXCEPTION 'FAIL: vender un vino sin stock no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg NOT LIKE '[RN-09] %' THEN
+            RAISE EXCEPTION 'FAIL: falta el prefijo [RN-09]: %', v_msg;
+        END IF;
+        IF v_msg <> format('[RN-09] Stock insuficiente del vino %s en la sala %s: disponible %s, solicitado %s',
+                            v_vino, 1, 0, 1) THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    SELECT count(*) INTO v_cnt
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb;
+
+    IF v_cnt <> 0 THEN
+        RAISE EXCEPTION 'FAIL: el comprobante quedo con % renglones', v_cnt;
+    END IF;
+
+    RAISE NOTICE 'OK RN-09-c: vino sin fila de stock rechazado con [RN-09] y disponible 0';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
