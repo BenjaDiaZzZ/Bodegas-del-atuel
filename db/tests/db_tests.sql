@@ -1,6 +1,7 @@
 -- =============================================================================
 -- db/tests/db_tests.sql · TPI «Bodegas del Atuel»
--- Pruebas manuales de constraints y funciones (Tareas 2.1 / 2.2)
+-- Pruebas manuales de constraints, funciones, procedimientos y triggers
+-- (Tareas 2.1, 2.2, 2.3, 2.4 y 2.7)
 --
 -- Ejecución sugerida:
 --   psql -v ON_ERROR_STOP=1 -f db/tests/db_tests.sql
@@ -2219,3 +2220,266 @@ BEGIN
     DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
+
+-- =============================================================================
+-- 16. Triggers de 005_triggers.sql (RN-10, RN-11 y RN-12) — P2
+-- =============================================================================
+
+-- 16a. RN-10: el ingreso nace en en_confeccion y solo avanza un paso.
+DO $$
+DECLARE
+    v_cod    integer;
+    v_estado estado_documento;
+    v_msg    text;
+BEGIN
+    BEGIN
+        INSERT INTO ingreso (fecha, estado, id_transportista, cuit_bodega)
+        VALUES (CURRENT_DATE, 'terminado', 1, '20123456789');
+
+        RAISE EXCEPTION 'FAIL: un ingreso no deberia nacer terminado';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-10]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-10 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega)
+    VALUES (CURRENT_DATE, 1, '20123456789')
+    RETURNING cod_ingreso INTO v_cod;
+
+    BEGIN
+        UPDATE ingreso SET estado = 'procesado' WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: en_confeccion -> procesado deberia fallar';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-10]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-10 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+
+    BEGIN
+        UPDATE ingreso SET estado = 'en_confeccion' WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: terminado -> en_confeccion deberia fallar';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-10]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-10 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    UPDATE ingreso SET estado = 'procesado' WHERE cod_ingreso = v_cod;
+
+    SELECT estado INTO v_estado FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_estado IS DISTINCT FROM 'procesado' THEN
+        RAISE EXCEPTION 'FAIL: estado final del ingreso inesperado: %', v_estado;
+    END IF;
+
+    RAISE NOTICE 'OK: RN-10 ingreso solo avanza en_confeccion -> terminado -> procesado';
+
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+END $$;
+
+-- 16b. RN-11: transferencia nace en en_confeccion, fecha forzada e inmutable
+--      y estados de a un paso.
+DO $$
+DECLARE
+    v_nro    integer;
+    v_fecha  date;
+    v_estado estado_documento;
+    v_msg    text;
+BEGIN
+    BEGIN
+        INSERT INTO transferencia (id_sala, fecha_confeccion, estado)
+        VALUES (1, DATE '2000-01-01', 'terminado');
+
+        RAISE EXCEPTION 'FAIL: una transferencia no deberia nacer terminada';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-11]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-11 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, DATE '2000-01-01')
+    RETURNING nro_solicitud, fecha_confeccion INTO v_nro, v_fecha;
+
+    IF v_fecha IS DISTINCT FROM CURRENT_DATE THEN
+        RAISE EXCEPTION 'FAIL: fecha_confeccion no fue forzada (fecha=%)', v_fecha;
+    END IF;
+
+    BEGIN
+        UPDATE transferencia
+           SET fecha_confeccion = CURRENT_DATE - 1
+         WHERE nro_solicitud = v_nro;
+
+        RAISE EXCEPTION 'FAIL: la fecha de confeccion deberia ser inmutable';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-11]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-11 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    BEGIN
+        UPDATE transferencia SET estado = 'procesado' WHERE nro_solicitud = v_nro;
+        RAISE EXCEPTION 'FAIL: en_confeccion -> procesado deberia fallar';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-11]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-11 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
+
+    BEGIN
+        UPDATE transferencia SET estado = 'en_confeccion' WHERE nro_solicitud = v_nro;
+        RAISE EXCEPTION 'FAIL: terminado -> en_confeccion deberia fallar';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-11]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-11 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    UPDATE transferencia SET estado = 'procesado' WHERE nro_solicitud = v_nro;
+
+    SELECT estado INTO v_estado FROM transferencia WHERE nro_solicitud = v_nro;
+    IF v_estado IS DISTINCT FROM 'procesado' THEN
+        RAISE EXCEPTION 'FAIL: estado final de la transferencia inesperado: %', v_estado;
+    END IF;
+
+    RAISE NOTICE 'OK: RN-11 transferencia solo avanza y fecha_confeccion es inmutable';
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+END $$;
+
+-- 16c. RN-12: renglones de ingreso y transferencia editables solo en
+--      en_confeccion; el borrado en cascada de la cabecera no falla.
+DO $$
+DECLARE
+    v_vino_a integer;
+    v_vino_b integer;
+    v_cod    integer;
+    v_nro    integer;
+    v_msg    text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD005 Renglon A', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_a;
+
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('JD005 Renglon B', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino_b;
+
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega)
+    VALUES (CURRENT_DATE, 1, '20123456789')
+    RETURNING cod_ingreso INTO v_cod;
+
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad)
+    VALUES (v_cod, v_vino_a, 5);
+
+    UPDATE renglon_ingreso SET cantidad = 6
+     WHERE cod_ingreso = v_cod AND cod_vino = v_vino_a;
+
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+
+    BEGIN
+        INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad)
+        VALUES (v_cod, v_vino_b, 1);
+
+        RAISE EXCEPTION 'FAIL: no se deberia insertar un renglon en un ingreso terminado';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    BEGIN
+        UPDATE renglon_ingreso SET cantidad = 7
+         WHERE cod_ingreso = v_cod AND cod_vino = v_vino_a;
+
+        RAISE EXCEPTION 'FAIL: no se deberia actualizar un renglon de un ingreso terminado';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    BEGIN
+        DELETE FROM renglon_ingreso
+         WHERE cod_ingreso = v_cod AND cod_vino = v_vino_a;
+
+        RAISE EXCEPTION 'FAIL: no se deberia borrar un renglon de un ingreso terminado';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+
+    INSERT INTO transferencia (id_sala, fecha_confeccion)
+    VALUES (1, CURRENT_DATE)
+    RETURNING nro_solicitud INTO v_nro;
+
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
+    VALUES (v_nro, v_vino_a, 5);
+
+    UPDATE renglon_transferencia SET cantidad = 6
+     WHERE nro_solicitud = v_nro AND cod_vino = v_vino_a;
+
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
+
+    BEGIN
+        INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
+        VALUES (v_nro, v_vino_b, 1);
+
+        RAISE EXCEPTION 'FAIL: no se deberia insertar un renglon en una transferencia terminada';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    BEGIN
+        UPDATE renglon_transferencia SET cantidad = 7
+         WHERE nro_solicitud = v_nro AND cod_vino = v_vino_a;
+
+        RAISE EXCEPTION 'FAIL: no se deberia actualizar un renglon de una transferencia terminada';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    BEGIN
+        DELETE FROM renglon_transferencia
+         WHERE nro_solicitud = v_nro AND cod_vino = v_vino_a;
+
+        RAISE EXCEPTION 'FAIL: no se deberia borrar un renglon de una transferencia terminada';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF left(v_msg, 7) <> '[RN-12]' THEN
+            RAISE EXCEPTION 'FAIL: mensaje RN-12 inesperado: %', v_msg;
+        END IF;
+    END;
+
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM vino WHERE cod_vino IN (v_vino_a, v_vino_b);
+
+    RAISE NOTICE 'OK: RN-12 renglones bloqueados fuera de en_confeccion y CASCADE sin error';
+END $$;
+
+-- =============================================================================
+-- Fin de las pruebas de triggers (005_triggers.sql) — P2
+-- =============================================================================

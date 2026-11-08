@@ -29,8 +29,9 @@ están en UTF-8 sin BOM, con separador coma y cabeceras en `snake_case`.
 - **Tipos y presentaciones:** listas de referencia para validar los `CHECK` de
   `002_constraints.sql`; no se cargan en tablas propias.
 - **Sin IDs:** las claves subrogadas las genera PostgreSQL. `codigo_postal` se
-  usa como clave natural de `localidad`; el esquema físico todavía conserva
-  `id_localidad`, pendiente en la issue #6.
+  usa como clave natural de `localidad` en el CSV; el esquema físico conserva
+  `id_localidad` como PK (decisión de equipo, issue #6 cerrada). Para
+  `vino.cod_vino` se usa `GENERATED ALWAYS AS IDENTITY` según Anexo A.2.
 - **Encargado regional:** se completará en `seed.py` con Faker `es_AR` y semilla
   fija, después de cargar las localidades. No se inventa en el CSV.
 
