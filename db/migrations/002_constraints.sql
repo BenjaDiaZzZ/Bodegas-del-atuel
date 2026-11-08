@@ -199,6 +199,9 @@ ALTER TABLE vino ADD CONSTRAINT ck_vino_presentacion
 ALTER TABLE vino ADD CONSTRAINT ck_vino_anada
     CHECK (anada BETWEEN 1990 AND 2100);
 
+-- Guarda defensiva sobre un valor derivado: cliente.descuento es una columna
+-- generada desde tipo (R-002), por lo que este CHECK nunca deberia dispararse
+-- en uso normal pero protege ante cambios futuros de la expresion.
 ALTER TABLE cliente ADD CONSTRAINT ck_cliente_descuento
     CHECK (descuento BETWEEN 0 AND 100);
 

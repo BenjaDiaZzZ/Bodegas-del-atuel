@@ -115,7 +115,7 @@ Supertipo de cliente: socio, distribuidor o exportador.
 | `direccion` | `varchar(150)` | Si | `-` | - | Direccion del cliente. |
 | `id_localidad` | `integer` | Si | `-` | FK -> localidad.id_localidad | Localidad del cliente (FK a localidad). |
 | `fecha_alta` | `date` | Si | `-` | - | Fecha de alta del cliente. |
-| `descuento` | `numeric(5,2)` | Si | `-` | - | Porcentaje de descuento asignado al cliente. |
+| `descuento` | `numeric(5,2)` | No | `GENERATED ALWAYS AS (fn_descuento_cliente(tipo)) STORED` | CHECK 0..100 | Porcentaje derivado de `tipo`; generado por la base, no editable. |
 
 ## `composicion`
 

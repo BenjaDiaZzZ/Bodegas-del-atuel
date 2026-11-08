@@ -13,7 +13,7 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
 *   **Dinero:** Siempre se usa `NUMERIC(12,2)`.
 *   **Porcentajes:** Siempre se usa `NUMERIC(5,2)` (ej. composición de cepas, `cliente.descuento`).
 *   **⚠️ ATENCIÓN con los descuentos:** 
-    *   `cliente.descuento` = Porcentaje (0 a 100).
+    *   `cliente.descuento` = Porcentaje (0 a 100). Es una columna generada (`GENERATED ALWAYS AS (fn_descuento_cliente(tipo)) STORED`, R-002): la base la deriva de `tipo`. La API nunca la envía ni la modifica; un `INSERT` o `UPDATE` que la incluya falla con `SQLSTATE 428C9`.
     *   `comprobante.descuento` y `renglon_comprobante.descuento` = **Monto de dinero descontado** (ej. $150.00), no porcentaje.
 
 ## 3. Interacción con la API (Reglas de Negocio)
@@ -58,6 +58,7 @@ están en `db/migrations/005_triggers.sql` (T1, T2, T7),
 | `23505` | 409 | UNIQUE violado (Registro duplicado). |
 | `23503` | 409 / 422 | FK violada (Dato inexistente o en uso). |
 | `23514` / `23502` | 422 | CHECK o NOT NULL violado. |
+| `428C9` | 422 | Escritura sobre una columna generada (`cliente.descuento`, R-002). |
 | `P0001` | 409 | Regla de negocio rechazada (RAISE EXCEPTION). |
 | `P0002` | 404 | Documento inexistente (`sp_procesar_ingreso` / `sp_procesar_transferencia`). |
 | `22P02` | 400 | Formato de texto inválido (ej. letra en un ID numérico).|
@@ -79,6 +80,7 @@ están en `db/migrations/005_triggers.sql` (T1, T2, T7),
     ```
 
 ### Ingresos y Transferencias
+*   **Cabeceras y claves inmutables (R-003/R-005/R-006):** al salir de `en_confeccion`, no se modifican `ingreso.fecha`, `ingreso.id_transportista`, `ingreso.cuit_bodega` ni `transferencia.id_sala`. Las claves de `renglon_ingreso` y `renglon_transferencia` tampoco se actualizan: para mover o cambiar el vino, se borra y reinserta el renglón mientras el documento siga en confección.
 *   **Fecha de Transferencia:** La API NO envía la fecha. Un trigger fuerza la inserción de la fecha actual y bloquea las modificaciones (RN-11).
 *   **Cambio de Estado:** La API avanza el documento a terminado con un `UPDATE`:
     ```sql

@@ -54,8 +54,8 @@ BEGIN;
     INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
     VALUES (9001, 'Sala R001', 1, 9001);
 
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (9001, 'Cliente R001', 'socio', 'DNI', '99001122', 'Calle R001 3', 9001, '2020-01-01', 10.00);
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (9001, 'Cliente R001', 'socio', 'DNI', '99001122', 'Calle R001 3', 9001, '2020-01-01');
 
     INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
     VALUES ('Vino R001 Test', 'tinto', 2024, 750, 13.50, 1000.00, '27900123456');

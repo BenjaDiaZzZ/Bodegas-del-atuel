@@ -4,33 +4,16 @@
 --
 -- Dependencias: 001_esquema.sql y 002_constraints.sql.
 -- Orden: 001 → 002 → 003 → 004 → 005.
--- Alcance: funciones de solo lectura/cálculo; sin escrituras ni bloqueos.
+-- Alcance: tres funciones de negocio de solo lectura/calculo; sin escrituras ni
+-- bloqueos. fn_descuento_cliente se define en 001_esquema.sql (R-002) y aca solo
+-- se le agrega el COMMENT.
 -- =============================================================================
 
 BEGIN;
 
--- RN-06: devuelve el porcentaje de descuento correspondiente al tipo de
--- cliente. Los tipos y porcentajes se fijan en docs/contratos.md §5.
-CREATE OR REPLACE FUNCTION fn_descuento_cliente(p_tipo varchar)
-RETURNS numeric(5,2)
-LANGUAGE plpgsql
-IMMUTABLE
-STRICT
-AS $$
-BEGIN
-    CASE p_tipo
-        WHEN 'socio' THEN
-            RETURN 10.00;
-        WHEN 'distribuidor' THEN
-            RETURN 20.00;
-        WHEN 'exportador' THEN
-            RETURN 30.00;
-        ELSE
-            RAISE EXCEPTION '[RN-06] Tipo de cliente desconocido: %', p_tipo;
-    END CASE;
-END;
-$$;
-
+-- R-002: fn_descuento_cliente se define en 001_esquema.sql porque la columna
+-- generada cliente.descuento la necesita antes del CREATE TABLE. Duplicar el
+-- cuerpo aca haria divergir dos fuentes de verdad, por eso solo se documenta.
 COMMENT ON FUNCTION fn_descuento_cliente(varchar) IS
     'RN-06: devuelve el porcentaje de descuento para el tipo de cliente; IMMUTABLE y STRICT.';
 
