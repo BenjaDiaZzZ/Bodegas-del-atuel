@@ -415,23 +415,36 @@ REVOKE SELECT ON TABLE localidad, cepa, bodega, maridaje, finca, sala,
 --    su GRANT explícito en este archivo (o en una migración posterior), con
 --    la matriz de la sección 3 como fundamento.
 --
---    LÍMITE OBSERVADO (PostgreSQL 16.15): si el resultado de un ALTER
---    DEFAULT PRIVILEGES es una ACL vacía, PostgreSQL la descarta; por eso el
---    REVOKE de EXECUTE de rutinas futuras queda solo como declaración de
---    intención y NO cancela el EXECUTE por defecto de PUBLIC en funciones
---    nuevas. El control efectivo es el REVOKE por objeto de la sección 4 y,
---    para rutinas futuras, el par GRANT/REVOKE explícito en cada migración.
+--    LÍMITE OBSERVADO Y CORRECCIÓN (PostgreSQL 16.15): con la cláusula
+--    IN SCHEMA el REVOKE es un no-op —no crea ninguna fila en pg_default_acl
+--    y las rutinas futuras conservan el EXECUTE implícito de PUBLIC—, por eso
+--    aquí se omite IN SCHEMA. Sin IN SCHEMA el REVOKE sí persiste:
+--    materializa una entrada de ACL por defecto sin concesión a PUBLIC.
+--
+--    ALCANCE POR ROL CREADOR: la ACL por defecto está ligada al rol que la
+--    declara, así que sin FOR ROLE solo cubre al rol que ejecuta esta
+--    migración (POSTGRES_USER, el runner). bda_owner es el único otro rol con
+--    CREATE sobre public y por eso recibe su propia línea: una rutina creada
+--    por él sin esto quedaría ejecutable por PUBLIC. Cualquier rol creador
+--    futuro necesita su propio ALTER DEFAULT PRIVILEGES. La ACL resultante es
+--    global (aplica a todo esquema), más estricta que la intención anterior y
+--    aceptable aquí porque los objetos del proyecto viven en public. El REVOKE
+--    por objeto de la sección 4 sigue siendo el control que siempre funciona y
+--    es obligatorio para toda rutina nueva. Verificación empírica: sección L de
+--    db/tests/test_007_roles.sql.
 -- -----------------------------------------------------------------------------
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
+ALTER DEFAULT PRIVILEGES
     REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
--- SELECT por defecto para reporte_ro: es una decisión de diseño deliberada
--- (documentada también en la sección 3) y se mantiene. Consecuencia que
--- debe tenerse presente: TODA tabla nueva del esquema public queda legible
--- por reporte_ro sin intervención, aunque no respalde ningún reporte. Toda
--- tabla sensible futura necesita su propio REVOKE explícito, como el de la
--- sección 7; el default no la protege. Cambiar este default es una decisión
--- de equipo, no de esta migración.
+ALTER DEFAULT PRIVILEGES FOR ROLE bda_owner
+    REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
+
+-- SELECT por defecto para reporte_ro: este default concede SELECT sobre TODA
+-- tabla futura del esquema public a reporte_ro. Es una conveniencia de diseño
+-- deliberada, pero constituye un riesgo residual para tablas sensibles
+-- futuras, que entonces necesitan su propio REVOKE explícito (como el de la
+-- sección 7). Quitar o acotar este default es una decisión pendiente del
+-- equipo, no algo que resuelva esta migración.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT ON TABLES TO reporte_ro;
 

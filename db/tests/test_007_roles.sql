@@ -1169,4 +1169,61 @@ BEGIN
     RAISE NOTICE 'OK (K2): re-aplicar 006 (CREATE OR REPLACE VIEW) preserva las ACL de las 4 vistas';
 END $$;
 
+-- -----------------------------------------------------------------------------
+-- L. Privilegios por defecto de rutinas futuras.
+--    El ALTER DEFAULT PRIVILEGES de la sección 8 de 007 debe cancelar el
+--    EXECUTE implícito que PostgreSQL concede a PUBLIC en toda función nueva.
+--    La ACL por defecto está ligada al rol que la declara, así que se prueban
+--    los dos roles creadores reales: el runner de migraciones (el rol con el
+--    que corre esta suite) y bda_owner, que tiene CREATE sobre public. Se
+--    crean sondas bajo cada uno, se comprueba que PUBLIC, app_rw y reporte_ro
+--    no pueden ejecutarlas y se eliminan al final. El DDL es transaccional: si
+--    una aserción aborta, el CREATE también se revierte.
+-- -----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.t7_probe_default_exec();
+DROP FUNCTION IF EXISTS public.t7_probe_default_bda();
+
+CREATE FUNCTION public.t7_probe_default_exec() RETURNS integer
+    LANGUAGE sql STABLE AS $$ SELECT 1 $$;
+
+-- Se crea como bda_owner (no se cambia el OWNER después: ALTER OWNER no
+-- re-aplica la ACL por defecto, y la prueba sería vacía). bda_owner tiene
+-- CREATE sobre public y SET ROLE funciona aunque rolcanlogin sea false.
+SET ROLE bda_owner;
+CREATE FUNCTION public.t7_probe_default_bda() RETURNS integer
+    LANGUAGE sql STABLE AS $$ SELECT 2 $$;
+RESET ROLE;
+
+DO $$
+BEGIN
+    IF has_function_privilege('public', 'public.t7_probe_default_exec()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva del runner queda ejecutable por PUBLIC';
+    END IF;
+
+    IF has_function_privilege('app_rw', 'public.t7_probe_default_exec()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva del runner queda ejecutable por app_rw';
+    END IF;
+
+    IF has_function_privilege('reporte_ro', 'public.t7_probe_default_exec()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva del runner queda ejecutable por reporte_ro';
+    END IF;
+
+    IF has_function_privilege('public', 'public.t7_probe_default_bda()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva de bda_owner queda ejecutable por PUBLIC';
+    END IF;
+
+    IF has_function_privilege('app_rw', 'public.t7_probe_default_bda()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva de bda_owner queda ejecutable por app_rw';
+    END IF;
+
+    IF has_function_privilege('reporte_ro', 'public.t7_probe_default_bda()', 'EXECUTE') THEN
+        RAISE EXCEPTION 'FAIL: una rutina nueva de bda_owner queda ejecutable por reporte_ro';
+    END IF;
+
+    RAISE NOTICE 'OK (L): ninguna rutina nueva hereda EXECUTE de PUBLIC, ni del runner ni de bda_owner';
+END $$;
+
+DROP FUNCTION IF EXISTS public.t7_probe_default_exec();
+DROP FUNCTION IF EXISTS public.t7_probe_default_bda();
+
 ROLLBACK;
