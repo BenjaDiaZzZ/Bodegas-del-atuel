@@ -1,0 +1,15 @@
+{
+  "name": "bodegas-del-atuel-front",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Front del TPI Bodegas del Atuel (Fase 7)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.3.6"
+  }
+}
