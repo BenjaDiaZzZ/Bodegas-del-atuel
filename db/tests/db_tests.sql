@@ -296,7 +296,8 @@ END $$;
 -- -----------------------------------------------------------------------------
 -- 9a. Debe funcionar: descuento = 150.00 (mayor a 100, pero es un importe)
 -- El trigger BEFORE de 005 completa la linea en el INSERT; el limite del CHECK
--- se ejercita con un UPDATE posterior (no hay trigger de UPDATE sobre renglones).
+-- se ejercita con un UPDATE posterior. T9 (inmutabilidad) rechaza ese UPDATE,
+-- asi que se deshabilita solo para este caso y se vuelve a habilitar enseguida.
 DO $$
 DECLARE
     v_cod integer;
@@ -315,9 +316,11 @@ BEGIN
     INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
     VALUES (v_nro, v_cod, 1);
 
+    EXECUTE 'ALTER TABLE renglon_comprobante DISABLE TRIGGER tg_renglon_comprobante_bud';
     UPDATE renglon_comprobante
        SET descuento = 150.00, subtotal = 850.00
      WHERE nro_comprobante = v_nro AND cod_vino = v_cod;
+    EXECUTE 'ALTER TABLE renglon_comprobante ENABLE TRIGGER tg_renglon_comprobante_bud';
 
     RAISE NOTICE 'OK: descuento 150.00 aceptado como importe';
 
@@ -328,6 +331,8 @@ END $$;
 
 -- 9b. Debe fallar: descuento = -1  -- esperado: 23514
 -- El INSERT lo completa el trigger de 005; el CHECK se prueba con un UPDATE.
+-- T9 (inmutabilidad) rechaza ese UPDATE, asi que se deshabilita solo para este
+-- caso y se vuelve a habilitar enseguida.
 DO $$
 DECLARE
     v_cod integer;
@@ -346,6 +351,7 @@ BEGIN
     INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
     VALUES (v_nro, v_cod, 1);
 
+    EXECUTE 'ALTER TABLE renglon_comprobante DISABLE TRIGGER tg_renglon_comprobante_bud';
     BEGIN
         UPDATE renglon_comprobante
            SET descuento = -1.00
@@ -355,6 +361,7 @@ BEGIN
     EXCEPTION WHEN check_violation THEN
         RAISE NOTICE 'OK: descuento negativo rechazado (23514)';
     END;
+    EXECUTE 'ALTER TABLE renglon_comprobante ENABLE TRIGGER tg_renglon_comprobante_bud';
 
     DELETE FROM comprobante WHERE nro_comprobante = v_nro;
     DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_cod;
@@ -2070,4 +2077,145 @@ BEGIN
 
     -- El sub-bloque revierte el INSERT: no hay nada que limpiar.
     DELETE FROM vino WHERE nombre_comercial = 'T26W4 RN15-b Vino';
+END $$;
+
+-- =============================================================================
+-- 15. Inmutabilidad de comprobantes emitidos (T9, RN pendiente de numerar)
+-- =============================================================================
+-- La cabecera y sus renglones no admiten UPDATE ni DELETE directo (T9). El
+-- unico DELETE permitido es el borrado en cascada desde la cabecera (consigna
+-- D1): cuando el comprobante ya no existe, los renglones caen con el CASCADE.
+-- Seccion nueva al final del archivo; las secciones 0 a 14 no se modifican.
+
+-- 15.1 F-a · UPDATE de un renglon de comprobante existente
+-- esperado: P0001
+DO $$
+DECLARE
+    v_vino     integer;
+    v_cb       integer;
+    v_msg      text;
+    v_cantidad integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W5 F-a Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_vino, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb, v_vino, 1);
+
+    BEGIN
+        UPDATE renglon_comprobante
+           SET cantidad = 2
+         WHERE nro_comprobante = v_cb AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: modificar un renglon emitido no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-XX] Los comprobantes emitidos son inmutables y no admiten modificaciones.' THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    -- El sub-bloque revierte: la cantidad sigue siendo la original.
+    SELECT cantidad INTO v_cantidad
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb AND cod_vino = v_vino;
+
+    IF v_cantidad IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'FAIL: la cantidad quedo en % y no en 1', v_cantidad;
+    END IF;
+
+    RAISE NOTICE 'OK F-a: UPDATE de un renglon emitido rechazado con [RN-XX]; nada cambio';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 15.2 F-b · DELETE directo de un renglon con la cabecera existente
+-- esperado: P0001
+DO $$
+DECLARE
+    v_vino integer;
+    v_cb   integer;
+    v_msg  text;
+    v_cnt  integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W5 F-b Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_vino, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb, v_vino, 1);
+
+    BEGIN
+        DELETE FROM renglon_comprobante
+         WHERE nro_comprobante = v_cb AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: borrar un renglon emitido no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-XX] Los comprobantes emitidos son inmutables y no admiten modificaciones.' THEN
+            RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg;
+        END IF;
+    END;
+
+    -- El sub-bloque revierte: el renglon sigue existiendo.
+    SELECT count(*) INTO v_cnt
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb AND cod_vino = v_vino;
+
+    IF v_cnt <> 1 THEN
+        RAISE EXCEPTION 'FAIL: el renglon quedo con % filas y no con 1', v_cnt;
+    END IF;
+
+    RAISE NOTICE 'OK F-b: DELETE directo de un renglon emitido rechazado con [RN-XX]; nada cambio';
+
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 15.3 U-a · Borrado en cascada desde la cabecera (consigna D1): permitido
+DO $$
+DECLARE
+    v_vino integer;
+    v_cb   integer;
+    v_cnt  integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
+    VALUES ('T26W5 U-a Vino', 'tinto', 2020, 750, 14.00, 1000.00, '20123456789')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO stock_sala (id_sala, cod_vino, cantidad) VALUES (1, v_vino, 10);
+
+    INSERT INTO comprobante (fecha, id_cliente, id_sala)
+    VALUES (CURRENT_DATE, 1, 1) RETURNING nro_comprobante INTO v_cb;
+
+    INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
+    VALUES (v_cb, v_vino, 1);
+
+    -- El DELETE de la cabecera arrastra los renglones por ON DELETE CASCADE.
+    DELETE FROM comprobante WHERE nro_comprobante = v_cb;
+
+    SELECT count(*) INTO v_cnt
+      FROM renglon_comprobante
+     WHERE nro_comprobante = v_cb;
+
+    IF v_cnt <> 0 THEN
+        RAISE EXCEPTION 'FAIL: quedaron % renglones tras borrar la cabecera', v_cnt;
+    END IF;
+
+    RAISE NOTICE 'OK U-a: borrar la cabecera arrastro los renglones (cascada D1)';
+
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
