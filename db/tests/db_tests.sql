@@ -40,14 +40,14 @@ BEGIN;
     ON CONFLICT DO NOTHING;
 
     -- Cliente genérico (socio) para las pruebas que solo necesitan un cliente.
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (1, 'Cliente Prueba', 'socio', 'DNI', '30123456', 'Calle Cliente 1', 1, '2020-01-01', 10.00)
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (1, 'Cliente Prueba', 'socio', 'DNI', '30123456', 'Calle Cliente 1', 1, '2020-01-01')
     ON CONFLICT DO NOTHING;
 
     -- Cliente dedicado al subtipo exportador: la FK compuesta (id_cliente, tipo)
     -- exige que el tipo del cliente sea exactamente 'exportador'.
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (2, 'Exportador Prueba', 'exportador', 'CUIT', '30712345678', 'Calle Exportador 1', 1, '2020-01-01', 5.00)
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (2, 'Exportador Prueba', 'exportador', 'CUIT', '30712345678', 'Calle Exportador 1', 1, '2020-01-01')
     ON CONFLICT DO NOTHING;
 
     INSERT INTO exportador (id_cliente, pais_destino_principal)
@@ -211,8 +211,8 @@ END $$;
 -- 6a. Primera insercion valida (queda confirmada para que 6b choque)
 DO $$
 BEGIN
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (10, 'Cliente Unico Test', 'socio', 'DNI', '30999999', 'Otra Calle', 1, '2021-01-01', 5.00)
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (10, 'Cliente Unico Test', 'socio', 'DNI', '30999999', 'Otra Calle', 1, '2021-01-01')
     ON CONFLICT DO NOTHING;
 
     RAISE NOTICE 'OK: cliente unico insertado';
@@ -221,8 +221,8 @@ END $$;
 -- 6b. Debe fallar: mismo tipo_documento y nro_documento  -- esperado: 23505
 DO $$
 BEGIN
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (11, 'Cliente Duplicado Test', 'distribuidor', 'DNI', '30999999', 'Otra Calle 2', 1, '2021-02-01', 0.00);
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (11, 'Cliente Duplicado Test', 'distribuidor', 'DNI', '30999999', 'Otra Calle 2', 1, '2021-02-01');
 
     RAISE EXCEPTION 'FAIL: cliente duplicado no deberia permitirse';
 EXCEPTION WHEN unique_violation THEN
@@ -388,8 +388,8 @@ DECLARE
 BEGIN
     SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_id FROM cliente;
 
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (v_id, 'Cliente Sin Subtipo', 'socio', 'DNI', '30888888', 'Calle Sin Subtipo 1', 1, '2020-01-01', 0.00);
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_id, 'Cliente Sin Subtipo', 'socio', 'DNI', '30888888', 'Calle Sin Subtipo 1', 1, '2020-01-01');
 
     UPDATE cliente SET tipo = 'distribuidor' WHERE id_cliente = v_id;
 
@@ -2382,5 +2382,528 @@ BEGIN
     RAISE NOTICE 'OK U-a: borrar la cabecera arrastro los renglones (cascada D1)';
 
     DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- 16. R-002: cliente.descuento es una columna generada desde tipo
+-- -----------------------------------------------------------------------------
+-- 16a. socio, distribuidor y exportador sin descuento obtienen 10/20/30
+DO $$
+DECLARE
+    v_socio        integer;
+    v_distribuidor integer;
+    v_exportador   integer;
+    v_desc         numeric(5,2);
+BEGIN
+    SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_socio FROM cliente;
+    v_distribuidor := v_socio + 1;
+    v_exportador   := v_socio + 2;
+
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_socio, 'R002 Socio', 'socio', 'DNI', '41000001', 'Calle R002 1', 1, '2020-01-01');
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_distribuidor, 'R002 Distribuidor', 'distribuidor', 'DNI', '41000002', 'Calle R002 2', 1, '2020-01-01');
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_exportador, 'R002 Exportador', 'exportador', 'DNI', '41000003', 'Calle R002 3', 1, '2020-01-01');
+
+    SELECT descuento INTO v_desc FROM cliente WHERE id_cliente = v_socio;
+    IF v_desc IS DISTINCT FROM 10.00 THEN
+        RAISE EXCEPTION 'FAIL: socio deberia tener descuento 10.00 y tiene %', v_desc;
+    END IF;
+
+    SELECT descuento INTO v_desc FROM cliente WHERE id_cliente = v_distribuidor;
+    IF v_desc IS DISTINCT FROM 20.00 THEN
+        RAISE EXCEPTION 'FAIL: distribuidor deberia tener descuento 20.00 y tiene %', v_desc;
+    END IF;
+
+    SELECT descuento INTO v_desc FROM cliente WHERE id_cliente = v_exportador;
+    IF v_desc IS DISTINCT FROM 30.00 THEN
+        RAISE EXCEPTION 'FAIL: exportador deberia tener descuento 30.00 y tiene %', v_desc;
+    END IF;
+
+    RAISE NOTICE 'OK: descuento generado 10.00/20.00/30.00 segun tipo';
+
+    DELETE FROM cliente WHERE id_cliente IN (v_socio, v_distribuidor, v_exportador);
+END $$;
+
+-- 16b. UPDATE directo de la columna generada: esperado 428C9
+DO $$
+DECLARE
+    v_id  integer;
+    v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_id FROM cliente;
+
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_id, 'R002 Update', 'socio', 'DNI', '41000004', 'Calle R002 4', 1, '2020-01-01');
+
+    BEGIN
+        UPDATE cliente SET descuento = 50 WHERE id_cliente = v_id;
+        RAISE EXCEPTION 'FAIL: UPDATE de descuento deberia fallar';
+    EXCEPTION WHEN SQLSTATE '428C9' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        RAISE NOTICE 'OK: UPDATE de descuento rechazado (428C9): %', v_msg;
+    END;
+
+    DELETE FROM cliente WHERE id_cliente = v_id;
+END $$;
+
+-- 16c. INSERT explicito de la columna generada: esperado 428C9
+DO $$
+DECLARE
+    v_id  integer;
+    v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_id FROM cliente;
+
+    BEGIN
+        INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
+        VALUES (v_id, 'R002 Insert', 'socio', 'DNI', '41000005', 'Calle R002 5', 1, '2020-01-01', 99);
+        RAISE EXCEPTION 'FAIL: INSERT de descuento deberia fallar';
+    EXCEPTION WHEN SQLSTATE '428C9' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        RAISE NOTICE 'OK: INSERT de descuento rechazado (428C9): %', v_msg;
+    END;
+
+    DELETE FROM cliente WHERE id_cliente = v_id;
+END $$;
+
+-- 16d. un cliente sin subtipo que cambia de socio a distribuidor recalcula 20.00
+DO $$
+DECLARE
+    v_id   integer;
+    v_desc numeric(5,2);
+BEGIN
+    SELECT COALESCE(MAX(id_cliente), 0) + 1 INTO v_id FROM cliente;
+
+    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+    VALUES (v_id, 'R002 Cambio Tipo', 'socio', 'DNI', '41000006', 'Calle R002 6', 1, '2020-01-01');
+
+    UPDATE cliente SET tipo = 'distribuidor' WHERE id_cliente = v_id;
+
+    SELECT descuento INTO v_desc FROM cliente WHERE id_cliente = v_id;
+    IF v_desc IS DISTINCT FROM 20.00 THEN
+        RAISE EXCEPTION 'FAIL: tras cambiar a distribuidor el descuento es % y no 20.00', v_desc;
+    END IF;
+
+    RAISE NOTICE 'OK: cambio de tipo recalcula el descuento generado (20.00)';
+
+    DELETE FROM cliente WHERE id_cliente = v_id;
+END $$;
+
+-- 16e. metadatos: columna NOT NULL generada y constraint presente
+DO $$
+DECLARE
+    v_nullable text;
+    v_generated text;
+    v_check     integer;
+BEGIN
+    SELECT is_nullable, is_generated
+      INTO v_nullable, v_generated
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'cliente'
+       AND column_name = 'descuento';
+
+    IF v_nullable IS DISTINCT FROM 'NO' THEN
+        RAISE EXCEPTION 'FAIL: cliente.descuento deberia ser NOT NULL y es %', v_nullable;
+    END IF;
+
+    IF v_generated IS DISTINCT FROM 'ALWAYS' THEN
+        RAISE EXCEPTION 'FAIL: cliente.descuento deberia ser GENERATED ALWAYS y es %', v_generated;
+    END IF;
+
+    SELECT count(*) INTO v_check
+      FROM pg_constraint
+     WHERE conrelid = 'cliente'::regclass
+       AND conname = 'ck_cliente_descuento';
+
+    IF v_check <> 1 THEN
+        RAISE EXCEPTION 'FAIL: falta la constraint ck_cliente_descuento';
+    END IF;
+
+    RAISE NOTICE 'OK: cliente.descuento es NOT NULL generada y conserva ck_cliente_descuento';
+END $$;
+
+-- =============================================================================
+-- 17. Inmutabilidad de cabecera y claves de renglon (R-003/R-005/R-006)
+-- =============================================================================
+-- Casos autocontenidos; los errores P0001 se capturan en sub-bloques para
+-- conservar los fixtures y verificar que la fila permanece intacta.
+
+-- 17.1 Ingreso borrador: sus metadatos pueden actualizarse.
+DO $$
+DECLARE v_cod integer; v_fecha date; v_trans integer; v_bodega cuit_dom;
+BEGIN
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    UPDATE ingreso SET fecha = CURRENT_DATE - 1, id_transportista = 1, cuit_bodega = '20123456789' WHERE cod_ingreso = v_cod;
+    SELECT fecha, id_transportista, cuit_bodega INTO v_fecha, v_trans, v_bodega FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_fecha IS DISTINCT FROM CURRENT_DATE - 1 OR v_trans IS DISTINCT FROM 1 OR v_bodega IS DISTINCT FROM '20123456789' THEN RAISE EXCEPTION 'FAIL: metadata de ingreso borrador no se actualizaron'; END IF;
+    RAISE NOTICE 'OK 17.1: metadata de ingreso borrador actualizables';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+END $$;
+
+-- 17.2 Ingreso terminado: fecha inmutable.
+DO $$
+DECLARE v_cod integer; v_fecha date; v_msg text;
+BEGIN
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    BEGIN
+        UPDATE ingreso SET fecha = CURRENT_DATE - 1 WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: fecha de ingreso terminado debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-10] Los datos de cabecera del ingreso ' || v_cod || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT fecha INTO v_fecha FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_fecha IS DISTINCT FROM CURRENT_DATE THEN RAISE EXCEPTION 'FAIL: fecha de ingreso cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.2: fecha de ingreso terminado inmutable';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+END $$;
+
+-- 17.3 Ingreso terminado: transportista inmutable.
+DO $$
+DECLARE v_cod integer; v_otro integer; v_actual integer; v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_transportista),0)+1 INTO v_otro FROM transportista;
+    INSERT INTO transportista (id_transportista, razon_social, cuit, email, telefono, domicilio) VALUES (v_otro, 'R003 Transportista', '20999991234', 'r003@example.test', '2600000000', 'R003');
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    BEGIN
+        UPDATE ingreso SET id_transportista = v_otro WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: transportista de ingreso terminado debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-10] Los datos de cabecera del ingreso ' || v_cod || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT id_transportista INTO v_actual FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_actual IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: transportista cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.3: transportista de ingreso terminado inmutable';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM transportista WHERE id_transportista = v_otro;
+END $$;
+
+-- 17.4 Ingreso terminado: bodega inmutable.
+DO $$
+DECLARE v_cod integer; v_cuit cuit_dom; v_msg text;
+BEGIN
+    INSERT INTO bodega (cuit, razon_social, domicilio) VALUES ('20999991235', 'R003 Bodega', 'R003');
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    BEGIN
+        UPDATE ingreso SET cuit_bodega = '20999991235' WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: bodega de ingreso terminado debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-10] Los datos de cabecera del ingreso ' || v_cod || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT cuit_bodega INTO v_cuit FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_cuit IS DISTINCT FROM '20123456789' THEN RAISE EXCEPTION 'FAIL: bodega cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.4: bodega de ingreso terminado inmutable';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM bodega WHERE cuit = '20999991235';
+END $$;
+
+-- 17.5 El mismo UPDATE que termina el ingreso no puede cambiar metadata.
+DO $$
+DECLARE v_cod integer; v_trans integer; v_estado estado_documento; v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_transportista),0)+1 INTO v_trans FROM transportista;
+    INSERT INTO transportista (id_transportista, razon_social, cuit, email, telefono, domicilio) VALUES (v_trans, 'R003 Transportista 5', '20999991236', 'r0035@example.test', '2600000000', 'R003');
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    BEGIN
+        UPDATE ingreso SET estado = 'terminado', id_transportista = v_trans WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: cambio combinado al terminar debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-10] Los datos de cabecera del ingreso ' || v_cod || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT estado, id_transportista INTO v_estado, v_trans FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_estado IS DISTINCT FROM 'en_confeccion' OR v_trans IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: estado o transportista cambiaron tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.5: metadata no cambia junto con el estado';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM transportista WHERE cuit = '20999991236';
+END $$;
+
+-- 17.6 Ingreso terminado: repetir valores actuales no es una modificacion.
+DO $$
+DECLARE v_cod integer;
+BEGIN
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    UPDATE ingreso SET fecha = CURRENT_DATE, id_transportista = 1, cuit_bodega = '20123456789' WHERE cod_ingreso = v_cod;
+    RAISE NOTICE 'OK 17.6: mismos valores de ingreso terminado aceptados';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+END $$;
+
+-- 17.7 Ingreso procesado: fecha inmutable.
+DO $$
+DECLARE v_cod integer; v_vino integer; v_fecha date; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 Ingreso procesado', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    UPDATE ingreso SET estado = 'terminado' WHERE cod_ingreso = v_cod;
+    CALL sp_procesar_ingreso(v_cod);
+    BEGIN
+        UPDATE ingreso SET fecha = CURRENT_DATE - 1 WHERE cod_ingreso = v_cod;
+        RAISE EXCEPTION 'FAIL: fecha de ingreso procesado debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-10] Los datos de cabecera del ingreso ' || v_cod || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT fecha INTO v_fecha FROM ingreso WHERE cod_ingreso = v_cod;
+    IF v_fecha IS DISTINCT FROM CURRENT_DATE THEN RAISE EXCEPTION 'FAIL: fecha procesada cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.7: fecha de ingreso procesado inmutable';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 17.8 Transferencia borrador: sala actualizable.
+DO $$
+DECLARE v_nro integer; v_sala integer; v_otrasala integer;
+BEGIN
+    SELECT COALESCE(MAX(id_localidad),0)+1 INTO v_sala FROM localidad;
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional) VALUES (v_sala, '5627', 'R003 Localidad', 'Mendoza', 'R003');
+    SELECT COALESCE(MAX(id_sala),0)+1 INTO v_otrasala FROM sala;
+    INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad) VALUES (v_otrasala, 'R003 Sala', 1, v_sala);
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    UPDATE transferencia SET id_sala = v_otrasala WHERE nro_solicitud = v_nro;
+    IF (SELECT id_sala FROM transferencia WHERE nro_solicitud = v_nro) IS DISTINCT FROM v_otrasala THEN RAISE EXCEPTION 'FAIL: sala de borrador no se actualizo'; END IF;
+    RAISE NOTICE 'OK 17.8: sala de transferencia borrador actualizable';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM sala WHERE id_sala = v_otrasala;
+    DELETE FROM localidad WHERE id_localidad = v_sala;
+END $$;
+
+-- 17.9 Transferencia terminada: sala inmutable.
+DO $$
+DECLARE v_nro integer; v_sala integer; v_otrasala integer; v_actual integer; v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_localidad),0)+1 INTO v_sala FROM localidad;
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional) VALUES (v_sala, '5628', 'R003 Localidad 9', 'Mendoza', 'R003');
+    SELECT COALESCE(MAX(id_sala),0)+1 INTO v_otrasala FROM sala;
+    INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad) VALUES (v_otrasala, 'R003 Sala 9', 1, v_sala);
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
+    BEGIN
+        UPDATE transferencia SET id_sala = v_otrasala WHERE nro_solicitud = v_nro;
+        RAISE EXCEPTION 'FAIL: sala de transferencia terminada debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-11] Los datos de cabecera de la transferencia ' || v_nro || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT id_sala INTO v_actual FROM transferencia WHERE nro_solicitud = v_nro;
+    IF v_actual IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: sala cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.9: sala de transferencia terminada inmutable';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM sala WHERE id_sala = v_otrasala;
+    DELETE FROM localidad WHERE id_localidad = v_sala;
+END $$;
+
+-- 17.10 Cambiar sala en el mismo UPDATE que termina la transferencia.
+DO $$
+DECLARE v_nro integer; v_sala integer; v_otrasala integer; v_estado estado_documento; v_actual integer; v_msg text;
+BEGIN
+    SELECT COALESCE(MAX(id_localidad),0)+1 INTO v_sala FROM localidad;
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional) VALUES (v_sala, '5629', 'R003 Localidad 10', 'Mendoza', 'R003');
+    SELECT COALESCE(MAX(id_sala),0)+1 INTO v_otrasala FROM sala;
+    INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad) VALUES (v_otrasala, 'R003 Sala 10', 1, v_sala);
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    BEGIN
+        UPDATE transferencia SET estado = 'terminado', id_sala = v_otrasala WHERE nro_solicitud = v_nro;
+        RAISE EXCEPTION 'FAIL: cambio combinado al terminar debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-11] Los datos de cabecera de la transferencia ' || v_nro || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT estado, id_sala INTO v_estado, v_actual FROM transferencia WHERE nro_solicitud = v_nro;
+    IF v_estado IS DISTINCT FROM 'en_confeccion' OR v_actual IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: estado o sala cambiaron tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.10: sala no cambia junto con estado';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM sala WHERE id_sala = v_otrasala;
+    DELETE FROM localidad WHERE id_localidad = v_sala;
+END $$;
+
+-- 17.11 Transferencia terminada: mismo id_sala aceptado.
+DO $$
+DECLARE v_nro integer;
+BEGIN
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
+    UPDATE transferencia SET id_sala = 1 WHERE nro_solicitud = v_nro;
+    RAISE NOTICE 'OK 17.11: mismo id_sala aceptado';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+END $$;
+
+-- 17.12 Transferencia procesada: sala inmutable.
+DO $$
+DECLARE v_nro integer; v_vino integer; v_sala integer; v_otrasala integer; v_actual integer; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 Transferencia procesada', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO stock_deposito (cod_vino, cantidad) VALUES (v_vino, 5);
+    SELECT COALESCE(MAX(id_localidad),0)+1 INTO v_sala FROM localidad;
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional) VALUES (v_sala, '5630', 'R003 Localidad 12', 'Mendoza', 'R003');
+    SELECT COALESCE(MAX(id_sala),0)+1 INTO v_otrasala FROM sala;
+    INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad) VALUES (v_otrasala, 'R003 Sala 12', 1, v_sala);
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 1);
+    UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = v_nro;
+    CALL sp_procesar_transferencia(v_nro);
+    BEGIN
+        UPDATE transferencia SET id_sala = v_otrasala WHERE nro_solicitud = v_nro;
+        RAISE EXCEPTION 'FAIL: sala de transferencia procesada debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-11] Los datos de cabecera de la transferencia ' || v_nro || ' no pueden modificarse una vez que salio de en_confeccion' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT id_sala INTO v_actual FROM transferencia WHERE nro_solicitud = v_nro;
+    IF v_actual IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FAIL: sala procesada cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.12: sala de transferencia procesada inmutable';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM stock_sala WHERE id_sala = 1 AND cod_vino = v_vino;
+    DELETE FROM stock_deposito WHERE cod_vino = v_vino;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+    DELETE FROM sala WHERE id_sala = v_otrasala;
+    DELETE FROM localidad WHERE id_localidad = v_sala;
+END $$;
+
+-- 17.13 renglon_ingreso borrador permite cambiar cantidad.
+DO $$
+DECLARE v_cod integer; v_vino integer; v_cantidad integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RI cantidad', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    UPDATE renglon_ingreso SET cantidad = 2 WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+    SELECT cantidad INTO v_cantidad FROM renglon_ingreso WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+    IF v_cantidad IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'FAIL: cantidad del renglon no se actualizo'; END IF;
+    RAISE NOTICE 'OK 17.13: cantidad de renglon_ingreso actualizable';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 17.14 renglon_ingreso no permite cambiar cod_ingreso.
+DO $$
+DECLARE v_cod integer; v_otro integer; v_vino integer; v_actual integer; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RI clave ingreso', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_otro;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    BEGIN
+        UPDATE renglon_ingreso SET cod_ingreso = v_otro WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: clave de renglon_ingreso debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-12] La clave de un renglon de renglon_ingreso no puede modificarse; borre la fila y vuelva a insertarla' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT cod_ingreso INTO v_actual FROM renglon_ingreso WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+    IF v_actual IS DISTINCT FROM v_cod THEN RAISE EXCEPTION 'FAIL: cod_ingreso cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.14: clave cod_ingreso protegida';
+    DELETE FROM ingreso WHERE cod_ingreso IN (v_cod, v_otro);
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 17.15 renglon_ingreso no permite cambiar cod_vino.
+DO $$
+DECLARE v_cod integer; v_vino integer; v_otro integer; v_actual integer; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RI vino A', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RI vino B', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_otro;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    BEGIN
+        UPDATE renglon_ingreso SET cod_vino = v_otro WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: cod_vino de renglon_ingreso debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-12] La clave de un renglon de renglon_ingreso no puede modificarse; borre la fila y vuelva a insertarla' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    IF NOT EXISTS (SELECT 1 FROM renglon_ingreso WHERE cod_ingreso = v_cod AND cod_vino = v_vino) THEN RAISE EXCEPTION 'FAIL: cod_vino cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.15: clave cod_vino de renglon_ingreso protegida';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM vino WHERE cod_vino IN (v_vino, v_otro);
+END $$;
+
+-- 17.16 renglon_transferencia no permite cambiar nro_solicitud.
+DO $$
+DECLARE v_nro integer; v_otro integer; v_vino integer; v_actual integer; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RT solicitud', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_otro;
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 1);
+    BEGIN
+        UPDATE renglon_transferencia SET nro_solicitud = v_otro WHERE nro_solicitud = v_nro AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: clave de renglon_transferencia debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-12] La clave de un renglon de renglon_transferencia no puede modificarse; borre la fila y vuelva a insertarla' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    SELECT nro_solicitud INTO v_actual FROM renglon_transferencia WHERE nro_solicitud = v_nro AND cod_vino = v_vino;
+    IF v_actual IS DISTINCT FROM v_nro THEN RAISE EXCEPTION 'FAIL: nro_solicitud cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.16: clave nro_solicitud protegida';
+    DELETE FROM transferencia WHERE nro_solicitud IN (v_nro, v_otro);
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 17.17 renglon_transferencia no permite cambiar cod_vino.
+DO $$
+DECLARE v_nro integer; v_vino integer; v_otro integer; v_msg text;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RT vino A', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 RT vino B', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_otro;
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 1);
+    BEGIN
+        UPDATE renglon_transferencia SET cod_vino = v_otro WHERE nro_solicitud = v_nro AND cod_vino = v_vino;
+        RAISE EXCEPTION 'FAIL: cod_vino de renglon_transferencia debio rechazarse';
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+        GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT;
+        IF v_msg <> '[RN-12] La clave de un renglon de renglon_transferencia no puede modificarse; borre la fila y vuelva a insertarla' THEN RAISE EXCEPTION 'FAIL: mensaje inesperado: %', v_msg; END IF;
+    END;
+    IF NOT EXISTS (SELECT 1 FROM renglon_transferencia WHERE nro_solicitud = v_nro AND cod_vino = v_vino) THEN RAISE EXCEPTION 'FAIL: cod_vino cambio tras rechazo'; END IF;
+    RAISE NOTICE 'OK 17.17: clave cod_vino de renglon_transferencia protegida';
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM vino WHERE cod_vino IN (v_vino, v_otro);
+END $$;
+
+-- 17.18 DELETE de renglones de documentos borrador permitido.
+DO $$
+DECLARE v_cod integer; v_nro integer; v_vino integer; v_count integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 Delete linea', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    DELETE FROM renglon_ingreso WHERE cod_ingreso = v_cod AND cod_vino = v_vino;
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 1);
+    DELETE FROM renglon_transferencia WHERE nro_solicitud = v_nro AND cod_vino = v_vino;
+    SELECT (SELECT count(*) FROM renglon_ingreso WHERE cod_ingreso = v_cod) + (SELECT count(*) FROM renglon_transferencia WHERE nro_solicitud = v_nro) INTO v_count;
+    IF v_count <> 0 THEN RAISE EXCEPTION 'FAIL: DELETE de renglon borrador no se completo'; END IF;
+    RAISE NOTICE 'OK 17.18: DELETE de renglones borrador permitido';
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    DELETE FROM vino WHERE cod_vino = v_vino;
+END $$;
+
+-- 17.19 DELETE de cabeceras con renglones conserva ON DELETE CASCADE.
+DO $$
+DECLARE v_cod integer; v_nro integer; v_vino integer; v_count integer;
+BEGIN
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega) VALUES ('R003 Cascade', 'tinto', 2020, 750, 14, 1000, '20123456789') RETURNING cod_vino INTO v_vino;
+    INSERT INTO ingreso (fecha, id_transportista, cuit_bodega) VALUES (CURRENT_DATE, 1, '20123456789') RETURNING cod_ingreso INTO v_cod;
+    INSERT INTO renglon_ingreso (cod_ingreso, cod_vino, cantidad) VALUES (v_cod, v_vino, 1);
+    INSERT INTO transferencia (id_sala, fecha_confeccion) VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
+    INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad) VALUES (v_nro, v_vino, 1);
+    DELETE FROM ingreso WHERE cod_ingreso = v_cod;
+    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    SELECT (SELECT count(*) FROM renglon_ingreso WHERE cod_ingreso = v_cod) + (SELECT count(*) FROM renglon_transferencia WHERE nro_solicitud = v_nro) INTO v_count;
+    IF v_count <> 0 THEN RAISE EXCEPTION 'FAIL: CASCADE no borro los renglones'; END IF;
+    RAISE NOTICE 'OK 17.19: DELETE de cabeceras conserva CASCADE';
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;

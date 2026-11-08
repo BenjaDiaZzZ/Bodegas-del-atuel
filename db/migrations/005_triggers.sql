@@ -55,6 +55,10 @@
 --     necesitan privilegios elevados; dejarlas INVOKER reduce la superficie de
 --     funciones DEFINER. El search_path fijo evita search_path hijacking.
 --
+--  7. R-003/R-005/R-006 · al salir de en_confeccion se congelan los datos de
+--     cabecera del ingreso y la sala de la transferencia; las claves de los
+--     renglones de ingreso/transferencia son inmutables.
+--
 -- Mensajes sin tildes ni caracteres especiales (convencion de contratos.md).
 -- =============================================================================
 
@@ -79,15 +83,16 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_sala       integer;
-    v_tipo       varchar(15);
     v_precio     numeric(12,2);
     v_disponible integer;
     v_porc       numeric(5,2);
     v_bruto      numeric(12,2);
 BEGIN
-    -- Cabecera y tipo de cliente: definen la sala y el porcentaje de descuento.
-    SELECT cb.id_sala, cl.tipo
-      INTO v_sala, v_tipo
+    -- Cabecera y descuento del cliente: definen la sala y el porcentaje. El
+    -- porcentaje viene de cliente.descuento, columna generada desde tipo (R-002),
+    -- para que exista una sola fuente de verdad.
+    SELECT cb.id_sala, cl.descuento
+      INTO v_sala, v_porc
       FROM comprobante AS cb
       JOIN cliente AS cl ON cl.id_cliente = cb.id_cliente
      WHERE cb.nro_comprobante = NEW.nro_comprobante;
@@ -112,7 +117,6 @@ BEGIN
     END IF;
 
     -- Calculo RN-08 (docs/contratos.md §5): redondeo explicito a 2 decimales.
-    v_porc := fn_descuento_cliente(v_tipo);
     NEW.precio_unitario := v_precio;
     v_bruto := NEW.cantidad * v_precio;
     NEW.descuento := ROUND(v_bruto * (v_porc / 100.0), 2);
@@ -235,13 +239,25 @@ BEGIN
             RAISE EXCEPTION '[RN-10] El ingreso % debe crecer en estado en_confeccion (recibido: %)',
                 NEW.cod_ingreso, NEW.estado;
         END IF;
-    ELSIF NEW.estado IS DISTINCT FROM OLD.estado THEN
-        IF NOT (
-            (OLD.estado = 'en_confeccion' AND NEW.estado = 'terminado')
-            OR (OLD.estado = 'terminado' AND NEW.estado = 'procesado')
-        ) THEN
-            RAISE EXCEPTION '[RN-10] Transicion de estado invalida en el ingreso %: % -> %',
-                NEW.cod_ingreso, OLD.estado, NEW.estado;
+    ELSE
+        IF NEW.estado IS DISTINCT FROM OLD.estado THEN
+            IF NOT (
+                (OLD.estado = 'en_confeccion' AND NEW.estado = 'terminado')
+                OR (OLD.estado = 'terminado' AND NEW.estado = 'procesado')
+            ) THEN
+                RAISE EXCEPTION '[RN-10] Transicion de estado invalida en el ingreso %: % -> %',
+                    NEW.cod_ingreso, OLD.estado, NEW.estado;
+            END IF;
+        END IF;
+
+        -- R-003: datos de cabecera congelados al salir de en_confeccion.
+        IF (OLD.estado IS DISTINCT FROM 'en_confeccion'
+            OR NEW.estado IS DISTINCT FROM 'en_confeccion')
+           AND (NEW.fecha            IS DISTINCT FROM OLD.fecha
+             OR NEW.id_transportista IS DISTINCT FROM OLD.id_transportista
+             OR NEW.cuit_bodega      IS DISTINCT FROM OLD.cuit_bodega) THEN
+            RAISE EXCEPTION '[RN-10] Los datos de cabecera del ingreso % no pueden modificarse una vez que salio de en_confeccion',
+                NEW.cod_ingreso;
         END IF;
     END IF;
 
@@ -250,7 +266,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_ingreso_estado() IS
-    'RN-10. BEFORE INSERT OR UPDATE de ingreso: el alta solo acepta en_confeccion y el estado solo avanza un paso (en_confeccion -> terminado -> procesado).';
+    'RN-10/R-003. BEFORE INSERT OR UPDATE de ingreso: alta en_confeccion, avance de estado de un paso y cabecera congelada al salir de en_confeccion.';
 
 -- RN-10 · los estados del ingreso solo avanzan.
 DROP TRIGGER IF EXISTS tg_ingreso_estado ON ingreso;
@@ -278,13 +294,23 @@ BEGIN
             RAISE EXCEPTION '[RN-11] La transferencia % debe crecer en estado en_confeccion (recibido: %)',
                 NEW.nro_solicitud, NEW.estado;
         END IF;
-    ELSIF NEW.estado IS DISTINCT FROM OLD.estado THEN
-        IF NOT (
-            (OLD.estado = 'en_confeccion' AND NEW.estado = 'terminado')
-            OR (OLD.estado = 'terminado' AND NEW.estado = 'procesado')
-        ) THEN
-            RAISE EXCEPTION '[RN-11] Transicion de estado invalida en la transferencia %: % -> %',
-                NEW.nro_solicitud, OLD.estado, NEW.estado;
+    ELSE
+        IF NEW.estado IS DISTINCT FROM OLD.estado THEN
+            IF NOT (
+                (OLD.estado = 'en_confeccion' AND NEW.estado = 'terminado')
+                OR (OLD.estado = 'terminado' AND NEW.estado = 'procesado')
+            ) THEN
+                RAISE EXCEPTION '[RN-11] Transicion de estado invalida en la transferencia %: % -> %',
+                    NEW.nro_solicitud, OLD.estado, NEW.estado;
+            END IF;
+        END IF;
+
+        -- R-005: id_sala congelada al salir de en_confeccion.
+        IF (OLD.estado IS DISTINCT FROM 'en_confeccion'
+            OR NEW.estado IS DISTINCT FROM 'en_confeccion')
+           AND NEW.id_sala IS DISTINCT FROM OLD.id_sala THEN
+            RAISE EXCEPTION '[RN-11] Los datos de cabecera de la transferencia % no pueden modificarse una vez que salio de en_confeccion',
+                NEW.nro_solicitud;
         END IF;
     END IF;
 
@@ -293,7 +319,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_transferencia_estado() IS
-    'RN-11. BEFORE INSERT OR UPDATE de transferencia: el alta solo acepta en_confeccion y el estado solo avanza un paso (en_confeccion -> terminado -> procesado).';
+    'RN-11/R-005. BEFORE INSERT OR UPDATE de transferencia: alta en_confeccion, avance de estado de un paso y id_sala congelada al salir de en_confeccion.';
 
 -- RN-11 · los estados de la transferencia solo avanzan.
 DROP TRIGGER IF EXISTS tg_transferencia_estado ON transferencia;
@@ -354,6 +380,23 @@ DECLARE
     v_estado estado_documento;
     v_doc    integer;
 BEGIN
+    -- R-006: la clave de un renglon nunca cambia. Se borra y se reinserta.
+    IF TG_OP = 'UPDATE' THEN
+        IF TG_TABLE_NAME = 'renglon_ingreso' THEN
+            IF NEW.cod_ingreso IS DISTINCT FROM OLD.cod_ingreso
+               OR NEW.cod_vino IS DISTINCT FROM OLD.cod_vino THEN
+                RAISE EXCEPTION '[RN-12] La clave de un renglon de % no puede modificarse; borre la fila y vuelva a insertarla',
+                    TG_TABLE_NAME;
+            END IF;
+        ELSE
+            IF NEW.nro_solicitud IS DISTINCT FROM OLD.nro_solicitud
+               OR NEW.cod_vino IS DISTINCT FROM OLD.cod_vino THEN
+                RAISE EXCEPTION '[RN-12] La clave de un renglon de % no puede modificarse; borre la fila y vuelva a insertarla',
+                    TG_TABLE_NAME;
+            END IF;
+        END IF;
+    END IF;
+
     IF TG_TABLE_NAME = 'renglon_ingreso' THEN
         IF TG_OP = 'DELETE' THEN
             v_doc := OLD.cod_ingreso;
@@ -397,7 +440,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_renglon_documento_bloqueo() IS
-    'RN-12. BEFORE INSERT/UPDATE/DELETE de renglon_ingreso y renglon_transferencia: solo permite editar renglones de un documento en_confeccion; omite la validacion si la cabecera fue borrada en cascada.';
+    'RN-12/R-006. BEFORE INSERT/UPDATE/DELETE de renglon_ingreso y renglon_transferencia: solo permite editar renglones en_confeccion, rechaza cambios de clave y omite validacion tras borrado en cascada.';
 
 -- RN-12 · renglones de ingreso editables solo en en_confeccion.
 DROP TRIGGER IF EXISTS tg_renglon_ingreso_biud ON renglon_ingreso;
