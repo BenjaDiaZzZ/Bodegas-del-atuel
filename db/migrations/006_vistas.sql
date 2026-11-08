@@ -15,7 +15,19 @@
 -- las mediciones muestran que el reporte es costoso, se puede convertir
 -- vw_stock_total_vino en materializada y documentar su refresco.
 --
--- Dependencias: 001_esquema.sql. No dependen de 002 a 005.
+-- Dependencias: 001_esquema.sql define la estructura (tablas y columnas), pero
+-- la SEMÁNTICA de las cifras depende de 002–005:
+--   · vw_ventas_mensuales_sala lee comprobante.total, que mantiene el trigger
+--     RN-08 de 005. Sin 005 la vista informa 0 mientras fn_total_comprobante
+--     informa el importe real (comprobado el 2026-11-07 sobre PostgreSQL 16).
+--   · El stock de vw_stock_total_vino y vw_ficha_vino es el que descuentan
+--     RN-09 (005) y sp_procesar_ingreso / sp_procesar_transferencia (004).
+--   · La composición de vw_ficha_vino supone la suma 100 % que valida RN-05
+--     (constraint trigger diferido de 005).
+-- 002 agrega NOT NULL/CHECK/UNIQUE sin renombrar columnas y 003 aporta
+-- fn_stock_sala y fn_total_comprobante. La coincidencia de las cuatro vistas con
+-- esas funciones y con los totales mantenidos por trigger se verifica en
+-- db/tests/test_006_vistas.sql.
 -- =============================================================================
 
 BEGIN;
