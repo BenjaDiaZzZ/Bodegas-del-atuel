@@ -22,8 +22,9 @@
 --     claro en lugar de violaciones de UNIQUE confusas.
 --
 -- Estado esperado con 001 → 007 aplicadas: todas las aserciones pasan. No hay
--- divergencia entre las vistas y las funciones contratadas; A1–A5 son prueba de
--- regresión de esa compatibilidad (ver 006_vistas.sql, encabezado).
+-- divergencia entre las vistas y las funciones contratadas; A0–A6 son prueba de
+-- regresión de esa compatibilidad (ver 006_vistas.sql, encabezado). A6 además
+-- cubre R-015: el bucket mensual no depende del TimeZone de la sesión.
 --
 -- Mensajes de error: identifican la vista y el valor observado.
 -- =============================================================================
@@ -76,9 +77,39 @@ INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
 VALUES (9001, 'Sala Norte Test 006', 2, 9001),
        (9002, 'Sala Sur Test 006', 3, 9001);
 
--- Cliente socio: fn_descuento_cliente('socio') = 10.00 (RN-06).
-INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-VALUES (9001, 'Cliente Test 006', 'socio', 'DNI', '90000001', 'Calle Cliente 006', 9001, DATE '2020-01-01', 10.00);
+-- Cliente socio: descuento es GENERATED ALWAYS AS (fn_descuento_cliente(tipo))
+-- STORED, así que NO se incluye en el INSERT: la base lo calcula. Para
+-- 'socio' el valor esperado es 10.00 (RN-06); se verifica abajo.
+INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+VALUES (9001, 'Cliente Test 006', 'socio', 'DNI', '90000001', 'Calle Cliente 006', 9001, DATE '2020-01-01');
+
+-- A0. La columna generada descuento coincide con fn_descuento_cliente(tipo)
+--     y con el literal independiente 10.00 del cliente socio sembrado.
+DO $$
+DECLARE
+    v_desc numeric(5,2);
+    v_fn   numeric(5,2);
+BEGIN
+    SELECT c.descuento, fn_descuento_cliente(c.tipo)
+      INTO v_desc, v_fn
+      FROM cliente AS c
+     WHERE c.id_cliente = 9001;
+
+    IF v_desc IS NULL THEN
+        RAISE EXCEPTION 'cliente 9001 no tiene descuento generado';
+    END IF;
+
+    IF v_desc IS DISTINCT FROM v_fn THEN
+        RAISE EXCEPTION 'descuento generado (%) difiere de fn_descuento_cliente(tipo) (%)',
+            v_desc, v_fn;
+    END IF;
+
+    IF v_desc <> 10.00 THEN
+        RAISE EXCEPTION 'cliente socio: descuento generado = %, esperado 10.00', v_desc;
+    END IF;
+
+    RAISE NOTICE 'OK A0: cliente.descuento es GENERATED y coincide con fn_descuento_cliente(tipo)';
+END $$;
 
 -- cod_vino es GENERATED ALWAYS: se referencia por nombre en el resto del script.
 INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
