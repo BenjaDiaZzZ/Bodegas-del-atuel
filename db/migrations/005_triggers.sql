@@ -15,8 +15,10 @@
 --  1. UN SOLO trigger BEFORE INSERT sobre renglon_comprobante completa la linea
 --     (precio_unitario, descuento, subtotal) y valida el stock con
 --     SELECT ... FOR UPDATE. UN SOLO trigger AFTER INSERT descuenta el stock y
---     recalcula la cabecera. No hay triggers de UPDATE ni DELETE sobre renglones
---     de comprobante: el documento es inmutable (docs/SPEC.md §1.2).
+--     recalcula la cabecera. El documento es inmutable y T9 (BEFORE UPDATE OR
+--     DELETE) rechaza cualquier cambio de sus renglones, porque no hay logica de
+--     recalculo de totales ni de stock. El borrado en cascada desde la cabecera
+--     se permite para no romper la consigna D1 (docs/SPEC.md §1.2).
 --     PostgreSQL dispara los triggers del mismo evento en orden alfabetico; para
 --     no depender de ese orden, cada evento y tabla criticos tienen UNA sola
 --     funcion que hace todo.
@@ -42,7 +44,7 @@
 BEGIN;
 
 -- =============================================================================
--- 1. VENTA · renglon_comprobante (RN-08, RN-09)
+-- 1. VENTA · renglon_comprobante (RN-08, RN-09, inmutabilidad con RN pendiente)
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -156,6 +158,40 @@ CREATE TRIGGER tg_renglon_comprobante_ai
     AFTER INSERT ON renglon_comprobante
     FOR EACH ROW
     EXECUTE FUNCTION fn_tg_renglon_venta_actualizar();
+
+-- -----------------------------------------------------------------------------
+-- T9 · fn_tg_renglon_venta_inmutable · BEFORE UPDATE OR DELETE ON renglon_comprobante
+-- El comprobante emitido es inmutable: no existe logica de recalculo de totales
+-- ni de stock, asi que cualquier UPDATE o DELETE directo de sus renglones se
+-- rechaza. Unica excepcion: el borrado en cascada desde la cabecera (consigna
+-- D1), cuando el comprobante ya no existe.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_tg_renglon_venta_inmutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Borrado en cascada desde la cabecera (consigna D1): no bloquear.
+    IF TG_OP = 'DELETE' AND NOT EXISTS (
+        SELECT 1 FROM comprobante
+         WHERE nro_comprobante = OLD.nro_comprobante
+    ) THEN
+        RETURN OLD;
+    END IF;
+
+    RAISE EXCEPTION '[RN-XX] Los comprobantes emitidos son inmutables y no admiten modificaciones.';
+END;
+$$;
+
+COMMENT ON FUNCTION fn_tg_renglon_venta_inmutable() IS
+    'Inmutabilidad (RN pendiente de numerar). BEFORE UPDATE OR DELETE de renglon_comprobante: rechaza cambios de un comprobante emitido; permite el borrado en cascada cuando la cabecera ya no existe (consigna D1).';
+
+-- Inmutabilidad · los renglones emitidos no se modifican ni se borran directo.
+DROP TRIGGER IF EXISTS tg_renglon_comprobante_bud ON renglon_comprobante;
+CREATE TRIGGER tg_renglon_comprobante_bud
+    BEFORE UPDATE OR DELETE ON renglon_comprobante
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_tg_renglon_venta_inmutable();
 
 -- =============================================================================
 -- 2. INGRESO · estado (RN-10)
