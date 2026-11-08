@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="titulo descripcion">
+  <title id="titulo">Boceto del tablero de reportes</title>
+  <desc id="descripcion">Indicadores, gráficos y accesos a los reportes del sistema.</desc>
+  <rect width="1200" height="800" fill="#f4f1ea"/>
+  <rect x="0" y="0" width="1200" height="72" fill="#5b1f2a"/>
+  <text x="32" y="45" fill="#ffffff" font-family="Arial, sans-serif" font-size="24" font-weight="bold">Bodegas del Atuel</text>
+  <text x="940" y="43" fill="#f2d7a6" font-family="Arial, sans-serif" font-size="17">Catálogo · Ventas · Reportes</text>
+
+  <text x="32" y="112" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="26" font-weight="bold">Tablero</text>
+  <text x="32" y="140" fill="#666666" font-family="Arial, sans-serif" font-size="16">Resumen operativo del período seleccionado.</text>
+  <rect x="930" y="104" width="110" height="36" rx="6" fill="#ffffff" stroke="#c9bfae"/>
+  <text x="948" y="128" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14">01/11/2026</text>
+  <rect x="1050" y="104" width="118" height="36" rx="6" fill="#ffffff" stroke="#c9bfae"/>
+  <text x="1068" y="128" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="14">07/11/2026</text>
+
+  <rect x="32" y="166" width="270" height="118" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="52" y="196" fill="#777777" font-family="Arial, sans-serif" font-size="13">VENTAS DEL MES</text>
+  <text x="52" y="234" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="30" font-weight="bold">$ 1.284.500</text>
+  <text x="52" y="262" fill="#2f6b3a" font-family="Arial, sans-serif" font-size="13">+ 12,4 % vs. mes anterior</text>
+
+  <rect x="318" y="166" width="270" height="118" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="338" y="196" fill="#777777" font-family="Arial, sans-serif" font-size="13">COMPROBANTES</text>
+  <text x="338" y="234" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="30" font-weight="bold">148</text>
+  <text x="338" y="262" fill="#2f6b3a" font-family="Arial, sans-serif" font-size="13">+ 9 vs. mes anterior</text>
+
+  <rect x="604" y="166" width="270" height="118" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="624" y="196" fill="#777777" font-family="Arial, sans-serif" font-size="13">TICKET PROMEDIO</text>
+  <text x="624" y="234" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="30" font-weight="bold">$ 8.679</text>
+  <text x="624" y="262" fill="#a33a2b" font-family="Arial, sans-serif" font-size="13">- 2,1 % vs. mes anterior</text>
+
+  <rect x="890" y="166" width="278" height="118" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="910" y="196" fill="#777777" font-family="Arial, sans-serif" font-size="13">VINOS SIN STOCK</text>
+  <text x="910" y="234" fill="#a33a2b" font-family="Arial, sans-serif" font-size="30" font-weight="bold">6</text>
+  <text x="910" y="262" fill="#777777" font-family="Arial, sans-serif" font-size="13">Requieren reposición</text>
+
+  <rect x="32" y="302" width="700" height="270" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="56" y="334" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">VENTAS POR SALA</text>
+  <line x1="86" y1="520" x2="690" y2="520" stroke="#c9bfae"/>
+  <line x1="86" y1="520" x2="86" y2="366" stroke="#c9bfae"/>
+  <rect x="130" y="430" width="70" height="90" fill="#5b1f2a"/>
+  <text x="138" y="548" fill="#555555" font-family="Arial, sans-serif" font-size="12">Principal</text>
+  <rect x="250" y="388" width="70" height="132" fill="#8a4a56"/>
+  <text x="266" y="548" fill="#555555" font-family="Arial, sans-serif" font-size="12">Reserva</text>
+  <rect x="370" y="466" width="70" height="54" fill="#b37a52"/>
+  <text x="388" y="548" fill="#555555" font-family="Arial, sans-serif" font-size="12">Eventos</text>
+  <rect x="490" y="410" width="70" height="110" fill="#5b1f2a"/>
+  <text x="508" y="548" fill="#555555" font-family="Arial, sans-serif" font-size="12">Depósito</text>
+  <rect x="610" y="490" width="70" height="30" fill="#b37a52"/>
+  <text x="632" y="548" fill="#555555" font-family="Arial, sans-serif" font-size="12">Terraza</text>
+  <text x="86" y="382" fill="#999999" font-family="Arial, sans-serif" font-size="11">$ 400k</text>
+  <text x="86" y="446" fill="#999999" font-family="Arial, sans-serif" font-size="11">$ 200k</text>
+  <text x="86" y="510" fill="#999999" font-family="Arial, sans-serif" font-size="11">$ 0</text>
+
+  <rect x="748" y="302" width="420" height="270" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="772" y="334" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">TOP 5 VINOS</text>
+  <text x="772" y="368" fill="#555555" font-family="Arial, sans-serif" font-size="13">1. Malbec Reserva 2021</text>
+  <rect x="772" y="378" width="300" height="12" rx="6" fill="#ede6da"/>
+  <rect x="772" y="378" width="270" height="12" rx="6" fill="#5b1f2a"/>
+  <text x="1100" y="388" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="12" text-anchor="end">42</text>
+
+  <text x="772" y="420" fill="#555555" font-family="Arial, sans-serif" font-size="13">2. Chardonnay Clásico 2023</text>
+  <rect x="772" y="430" width="300" height="12" rx="6" fill="#ede6da"/>
+  <rect x="772" y="430" width="210" height="12" rx="6" fill="#8a4a56"/>
+  <text x="1100" y="440" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="12" text-anchor="end">33</text>
+
+  <text x="772" y="472" fill="#555555" font-family="Arial, sans-serif" font-size="13">3. Rosé de Malbec 2022</text>
+  <rect x="772" y="482" width="300" height="12" rx="6" fill="#ede6da"/>
+  <rect x="772" y="482" width="160" height="12" rx="6" fill="#b37a52"/>
+  <text x="1100" y="492" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="12" text-anchor="end">25</text>
+
+  <text x="772" y="524" fill="#555555" font-family="Arial, sans-serif" font-size="13">4. Cabernet Sauvignon 2020</text>
+  <rect x="772" y="534" width="300" height="12" rx="6" fill="#ede6da"/>
+  <rect x="772" y="534" width="110" height="12" rx="6" fill="#5b1f2a"/>
+  <text x="1100" y="544" fill="#2b2b2b" font-family="Arial, sans-serif" font-size="12" text-anchor="end">18</text>
+
+  <rect x="32" y="598" width="1136" height="100" rx="10" fill="#ffffff" stroke="#d8d0c2"/>
+  <text x="56" y="628" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="15" font-weight="bold">REPORTES</text>
+  <rect x="56" y="642" width="194" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="76" y="666" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13">Top de vinos</text>
+  <rect x="264" y="642" width="194" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="284" y="666" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13">Ventas por sala</text>
+  <rect x="472" y="642" width="194" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="492" y="666" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13">Vinos sin stock</text>
+  <rect x="680" y="642" width="210" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="700" y="666" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13">Transportista activo</text>
+  <rect x="904" y="642" width="210" height="38" rx="6" fill="#f8f6f1" stroke="#c9bfae"/>
+  <text x="924" y="666" fill="#5b1f2a" font-family="Arial, sans-serif" font-size="13">Trazabilidad de vino</text>
+
+  <text x="32" y="750" fill="#8a8175" font-family="Arial, sans-serif" font-size="13">Boceto 5 · Tablero de reportes · TPI Bodegas del Atuel</text>
+</svg>
