@@ -606,6 +606,39 @@ VALUES (9101, 'Transportista Test 007', '20000000026', 'test007@test.com', '2620
 INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
 VALUES (9101, 'Sala Test 007', 2, 9101);
 
+-- Alinea las secuencias identity con los ids ya presentes antes de que el
+-- fixture inserte sin id explícito. db_tests.sql siembra filas con ids
+-- explícitos sin avanzar la secuencia; sin este ajuste, el primer INSERT por
+-- identity devuelve un id ocupado y colisiona en la PK. setval(seq, MAX(id))
+-- garantiza que el siguiente valor supere a toda fila existente, sin importar
+-- dónde estuviera la secuencia. En una base recién inicializada no hay filas y
+-- no se toca nada, así que el comportamiento sobre base limpia no cambia.
+-- Corre como superusuario, antes del SET ROLE app_rw, porque setval exige
+-- UPDATE sobre la secuencia y app_rw no lo tiene.
+DO $$
+DECLARE
+    s record;
+BEGIN
+    FOR s IN
+        SELECT 'cliente_id_cliente_seq'::text           AS seq,
+               COALESCE(MAX(id_cliente), 0)             AS mx FROM cliente
+        UNION ALL
+        SELECT 'vino_cod_vino_seq',        COALESCE(MAX(cod_vino), 0)        FROM vino
+        UNION ALL
+        SELECT 'comprobante_nro_comprobante_seq',
+               COALESCE(MAX(nro_comprobante), 0)                             FROM comprobante
+        UNION ALL
+        SELECT 'ingreso_cod_ingreso_seq',  COALESCE(MAX(cod_ingreso), 0)     FROM ingreso
+        UNION ALL
+        SELECT 'transferencia_nro_solicitud_seq',
+               COALESCE(MAX(nro_solicitud), 0)                               FROM transferencia
+    LOOP
+        IF s.mx > 0 THEN
+            PERFORM setval(s.seq, s.mx);
+        END IF;
+    END LOOP;
+END $$;
+
 DO $$
 DECLARE
     v_cliente integer;
