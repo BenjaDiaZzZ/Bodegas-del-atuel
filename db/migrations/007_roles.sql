@@ -9,12 +9,37 @@
 --
 -- Decisiones de seguridad:
 --   - Se revocan los privilegios de PUBLIC sobre el esquema y los objetos.
---   - app_rw recibe solo DML (SELECT/INSERT/UPDATE/DELETE), uso de secuencias
---     y EXECUTE sobre funciones/procedimientos. No puede crear objetos.
+--   - app_rw recibe solo el DML permitido, uso de secuencias y EXECUTE sobre
+--     funciones/procedimientos. No puede crear objetos.
 --   - reporte_ro recibe solo SELECT. No puede ejecutar rutinas ni usar secuencias.
 --   - Las contraseñas NO se escriben en este archivo. Los roles se crean sin
 --     LOGIN y `scripts/set_role_passwords.sh` les asigna la contraseña desde
 --     DB_PASSWORD y REPORTE_RO_PASSWORD. Nunca se commitea .env.
+--
+-- HALLAZGO R-001 · matriz de privilegios de app_rw (seccion 5b):
+--   La API ya no recibe DML de tabla completa sobre las tablas criticas; solo
+--   puede insertar las columnas que le corresponden y disparar las rutinas
+--   DEFINER (T1, T2, T7 y los procedures de 004), que escriben totales, stocks
+--   y auditoria con los permisos del owner. Matriz exacta:
+--     comprobante            SELECT; INSERT (fecha, id_cliente, id_sala)
+--     renglon_comprobante    SELECT; INSERT (nro_comprobante, cod_vino, cantidad)
+--     stock_sala             SELECT
+--     stock_deposito         SELECT
+--     ingreso                SELECT; INSERT (fecha, id_transportista, cuit_bodega);
+--                            UPDATE (estado)
+--     transferencia          SELECT; INSERT (id_sala); UPDATE (estado)
+--     renglon_ingreso        SELECT; INSERT (cod_ingreso, cod_vino, cantidad);
+--                            UPDATE (cantidad); DELETE
+--     renglon_transferencia  SELECT; INSERT (nro_solicitud, cod_vino, cantidad);
+--                            UPDATE (cantidad); DELETE
+--     auditoria_precio       SELECT
+--     vino                   sin cambios (DML completo de la seccion 5)
+--   Ninguna tabla critica conserva UPDATE ni DELETE de tabla completa.
+--
+--   ADVERTENCIA: `ALTER DEFAULT PRIVILEGES` (seccion 7) sigue otorgando DML
+--   amplio sobre las tablas que se creen en el futuro. Toda tabla sensible
+--   nueva debe restrangerse explicitamente con un REVOKE + GRANT por columna
+--   como los de la seccion 5b; el default no la protege.
 --
 -- En el Docker Compose local, el usuario `POSTGRES_USER` (por defecto
 -- `bodegas`) es el propietario real del clúster/base. `bda_owner` queda como
@@ -104,6 +129,73 @@ GRANT EXECUTE
     TO app_rw;
 
 -- -----------------------------------------------------------------------------
+-- 5b. Matriz de privilegios de app_rw (hallazgo R-001)
+--     La seccion 5 dio DML de tabla completa a app_rw. Con triggers INVOKER
+--     eso permitia saltarse los triggers ante una inyeccion SQL y modificar
+--     totales, stocks o auditoria a mano. Ahora T1, T2, T7 y los procedures
+--     son SECURITY DEFINER (004/005) y app_rw solo conserva lo minimo. El
+--     orden importa: primero REVOKE del DML de tabla completa y despues GRANT
+--     por columna.
+--     Las columnas calculadas por trigger se omiten del GRANT de INSERT: el
+--     trigger las completa en NEW sin chequeo de privilegio de columna. Los
+--     DEFAULT y las columnas IDENTITY siguen funcionando con GRANT por columna.
+-- -----------------------------------------------------------------------------
+
+-- comprobante: la API solo crea la cabecera; los importes los escribe T2.
+REVOKE ALL PRIVILEGES ON TABLE comprobante FROM app_rw;
+GRANT SELECT ON TABLE comprobante TO app_rw;
+GRANT INSERT (fecha, id_cliente, id_sala) ON TABLE comprobante TO app_rw;
+
+-- renglon_comprobante: la API solo envia vino y cantidad; T1 completa importes.
+REVOKE ALL PRIVILEGES ON TABLE renglon_comprobante FROM app_rw;
+GRANT SELECT ON TABLE renglon_comprobante TO app_rw;
+GRANT INSERT (nro_comprobante, cod_vino, cantidad)
+    ON TABLE renglon_comprobante TO app_rw;
+
+-- stock_sala / stock_deposito: solo lectura. Toda escritura pasa por T2 o por
+-- los procedures DEFINER.
+REVOKE ALL PRIVILEGES ON TABLE stock_sala FROM app_rw;
+GRANT SELECT ON TABLE stock_sala TO app_rw;
+REVOKE ALL PRIVILEGES ON TABLE stock_deposito FROM app_rw;
+GRANT SELECT ON TABLE stock_deposito TO app_rw;
+
+-- ingreso: alta sin estado (DEFAULT en_confeccion) y avance de estado.
+REVOKE ALL PRIVILEGES ON TABLE ingreso FROM app_rw;
+GRANT SELECT ON TABLE ingreso TO app_rw;
+GRANT INSERT (fecha, id_transportista, cuit_bodega) ON TABLE ingreso TO app_rw;
+GRANT UPDATE (estado) ON TABLE ingreso TO app_rw;
+
+-- transferencia: alta sin fecha ni estado (los fuerza/default el esquema) y
+-- avance de estado.
+REVOKE ALL PRIVILEGES ON TABLE transferencia FROM app_rw;
+GRANT SELECT ON TABLE transferencia TO app_rw;
+GRANT INSERT (id_sala) ON TABLE transferencia TO app_rw;
+GRANT UPDATE (estado) ON TABLE transferencia TO app_rw;
+
+-- renglones de documento: editables mientras el documento esta en_confeccion
+-- (T6 lo valida); la API puede corregir cantidades y borrar renglones.
+REVOKE ALL PRIVILEGES ON TABLE renglon_ingreso FROM app_rw;
+GRANT SELECT ON TABLE renglon_ingreso TO app_rw;
+GRANT INSERT (cod_ingreso, cod_vino, cantidad)
+    ON TABLE renglon_ingreso TO app_rw;
+GRANT UPDATE (cantidad) ON TABLE renglon_ingreso TO app_rw;
+GRANT DELETE ON TABLE renglon_ingreso TO app_rw;
+
+REVOKE ALL PRIVILEGES ON TABLE renglon_transferencia FROM app_rw;
+GRANT SELECT ON TABLE renglon_transferencia TO app_rw;
+GRANT INSERT (nro_solicitud, cod_vino, cantidad)
+    ON TABLE renglon_transferencia TO app_rw;
+GRANT UPDATE (cantidad) ON TABLE renglon_transferencia TO app_rw;
+GRANT DELETE ON TABLE renglon_transferencia TO app_rw;
+
+-- auditoria_precio: solo lectura; la escribe T7 (DEFINER).
+REVOKE ALL PRIVILEGES ON TABLE auditoria_precio FROM app_rw;
+GRANT SELECT ON TABLE auditoria_precio TO app_rw;
+
+-- vino: sin cambios a proposito. El precio lo edita la API (queda auditado por
+-- T7) y el DML completo de la seccion 5 sigue vigente.
+
+-- -----------------------------------------------------------------------------
 -- 6. Reportes: solo lectura
 --    Se incluyen vistas y tablas. Las vistas permiten encapsular reportes;
 --    las tablas quedan disponibles para consultas de solo lectura puntuales.
@@ -120,6 +212,9 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
 -- 7. Privilegios por defecto para objetos que se creen en el futuro
 --    (por ejemplo, índices o vistas de la etapa 4). Se aplican a los objetos
 --    creados por el rol que ejecuta esta migración.
+--    ADVERTENCIA (R-001): este default da a app_rw DML amplio sobre toda tabla
+--    nueva, incluidas las sensibles. Toda tabla sensible que se agregue debe
+--    restrangerse explicitamente con REVOKE + GRANT por columna, como en 5b.
 -- -----------------------------------------------------------------------------
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rw;

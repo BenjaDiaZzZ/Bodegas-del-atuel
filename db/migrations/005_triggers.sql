@@ -38,6 +38,23 @@
 --     004_procedimientos.sql (plan_004.md §3 y §14): los mensajes de hechos
 --     identicos se alinean para no divergir.
 --
+--  6. HALLAZGO R-001 · la integridad no depende del privilegio del llamador.
+--     T1, T2 y T7 se declaran LANGUAGE plpgsql SECURITY DEFINER con
+--     SET search_path = pg_catalog, public en el mismo CREATE OR REPLACE (un
+--     replace sin atributos los resetea a INVOKER). Con DEFINER, 007 puede
+--     quitarle a app_rw el DML de tabla completa sobre las tablas criticas:
+--     una inyeccion SQL en la API ya no puede saltarse los triggers para
+--     modificar totales, stocks ni auditoria a mano.
+--       · T1 hace SELECT ... FOR UPDATE sobre stock_sala y el lock exige
+--         privilegio UPDATE; sin DEFINER devuelve 42501 (verificado
+--         empiricamente).
+--       · T2 escribe stock_sala y la cabecera del comprobante.
+--       · T7 inserta en auditoria_precio, que app_rw solo puede leer.
+--     Las demas funciones (T3, T4, T5, T6, T8 y T9) quedan INVOKER a
+--     proposito: solo leen tablas sobre las que app_rw conserva SELECT y no
+--     necesitan privilegios elevados; dejarlas INVOKER reduce la superficie de
+--     funciones DEFINER. El search_path fijo evita search_path hijacking.
+--
 -- Mensajes sin tildes ni caracteres especiales (convencion de contratos.md).
 -- =============================================================================
 
@@ -57,6 +74,8 @@ BEGIN;
 CREATE OR REPLACE FUNCTION fn_tg_renglon_venta_completar()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_sala       integer;
@@ -104,7 +123,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_renglon_venta_completar() IS
-    'RN-08 y RN-09. BEFORE INSERT de renglon_comprobante: completa precio_unitario, descuento y subtotal, y valida el stock de la sala con FOR UPDATE.';
+    'RN-08 y RN-09. BEFORE INSERT de renglon_comprobante: completa precio_unitario, descuento y subtotal, y valida el stock de la sala con FOR UPDATE. SECURITY DEFINER con search_path fijo (pg_catalog, public): el FOR UPDATE exige privilegio UPDATE sobre stock_sala, que app_rw ya no tiene.';
 
 -- RN-08, RN-09 · completa y valida la linea de venta antes de insertarla.
 DROP TRIGGER IF EXISTS tg_renglon_comprobante_bi ON renglon_comprobante;
@@ -122,6 +141,8 @@ CREATE TRIGGER tg_renglon_comprobante_bi
 CREATE OR REPLACE FUNCTION fn_tg_renglon_venta_actualizar()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_sala integer;
@@ -150,7 +171,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_renglon_venta_actualizar() IS
-    'RN-08 y RN-09. AFTER INSERT de renglon_comprobante: descuenta stock_sala y recalcula subtotal, descuento y total de la cabecera en un solo UPDATE.';
+    'RN-08 y RN-09. AFTER INSERT de renglon_comprobante: descuenta stock_sala y recalcula subtotal, descuento y total de la cabecera en un solo UPDATE. SECURITY DEFINER con search_path fijo (pg_catalog, public): escribe stock_sala y comprobante, sobre los que app_rw ya no tiene DML.';
 
 -- RN-08, RN-09 · descuenta stock y actualiza los totales de la cabecera.
 DROP TRIGGER IF EXISTS tg_renglon_comprobante_ai ON renglon_comprobante;
@@ -400,11 +421,14 @@ CREATE TRIGGER tg_renglon_transferencia_biud
 -- T7 · fn_tg_vino_precio_auditoria · AFTER UPDATE ON vino
 -- Registra en auditoria_precio solo los cambios reales de precio_venta (el WHEN
 -- del trigger descarta los UPDATE que tocan otros atributos). El usuario sale de
--- app.usuario; si la API no lo seteo, se usa el rol de la base.
+-- app.usuario; si la API no lo seteo, se usa session_user (dentro de DEFINER
+-- current_user es el owner).
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_tg_vino_precio_auditoria()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
     INSERT INTO auditoria_precio (cod_vino, precio_anterior, precio_nuevo, fecha_hora, usuario)
@@ -413,7 +437,7 @@ BEGIN
         OLD.precio_venta,
         NEW.precio_venta,
         CURRENT_TIMESTAMP,
-        COALESCE(NULLIF(current_setting('app.usuario', true), ''), current_user)
+        COALESCE(NULLIF(current_setting('app.usuario', true), ''), session_user)
     );
 
     RETURN NULL;
@@ -421,7 +445,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_tg_vino_precio_auditoria() IS
-    'RN-13. AFTER UPDATE de vino: registra en auditoria_precio los cambios reales de precio_venta con el usuario de app.usuario o el rol de la base.';
+    'RN-13. AFTER UPDATE de vino: registra en auditoria_precio los cambios reales de precio_venta con el usuario de app.usuario o session_user. SECURITY DEFINER con search_path fijo (pg_catalog, public): inserta en auditoria_precio, que app_rw solo puede leer.';
 
 -- RN-13 · auditoria de cambios de precio, solo cuando precio_venta cambia.
 DROP TRIGGER IF EXISTS tg_vino_precio_auditoria ON vino;

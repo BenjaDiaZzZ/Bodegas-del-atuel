@@ -22,6 +22,36 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
 *   **Transacciones Diferidas:** El constraint trigger de la RN-05 (porcentajes suman 100) falla recién al ejecutar el `COMMIT`. La API debe capturar las excepciones en la confirmación de la transacción, no solo en la ejecución del `INSERT`/`UPDATE`.
 *   **Roles:** La API se conectará utilizando el rol `app_rw`. Para consultas de los reportes se puede usar `reporte_ro`. (Definidos en las variables de entorno).
 
+### Modelo de privilegios de `app_rw` (hallazgo R-001)
+
+La corrección de R-001 (en `db/migrations/004_procedimientos.sql`,
+`db/migrations/005_triggers.sql` y `db/migrations/007_roles.sql`) mueve la
+integridad a rutinas `SECURITY DEFINER` y reduce lo que la API puede escribir
+directamente con `app_rw`:
+
+*   `app_rw` **no puede** hacer `UPDATE` sobre totales (`comprobante.subtotal`,
+    `descuento`, `total`), `stock_sala` ni `stock_deposito`, y **no puede**
+    `DELETE` `comprobante` ni `renglon_comprobante`. Esos cambios ocurren solo
+    dentro de T1, T2, T7 y los procedures.
+*   Los `INSERT` deben indicar la lista de columnas permitida: `comprobante`
+    (`fecha`, `id_cliente`, `id_sala`), `renglon_comprobante` (`nro_comprobante`,
+    `cod_vino`, `cantidad`), `ingreso` (`fecha`, `id_transportista`,
+    `cuit_bodega`) y `transferencia` (`id_sala`). Las columnas calculadas por
+    trigger y los `DEFAULT`/`IDENTITY` quedan fuera del `GRANT`.
+*   El avance de estado se limita a `UPDATE ... SET estado = ...` en `ingreso` y
+    `transferencia`; los movimientos de stock se hacen únicamente con
+    `CALL sp_procesar_ingreso(...)` y `CALL sp_procesar_transferencia(...)`.
+*   Los renglones de documento admiten `UPDATE (cantidad)` y `DELETE` mientras
+    el documento esté `en_confeccion`.
+*   La auditoría la escribe T7: `usuario` sale de `app.usuario` o, si no está
+    seteado, de `session_user`.
+
+La matriz completa, el `SET search_path` de cada rutina DEFINER y las razones
+están en `db/migrations/005_triggers.sql` (T1, T2, T7),
+`db/migrations/004_procedimientos.sql` (procedures) y
+`db/migrations/007_roles.sql` (matriz de `app_rw`), y se verifican en
+`db/tests/security_r001.sql`.
+
 ### Tabla de Traducción de Errores en la API
 | SQLSTATE | HTTP | Significado |
 | :--- | :--- | :--- |

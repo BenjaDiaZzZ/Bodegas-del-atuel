@@ -55,6 +55,22 @@ con `CURRENT_DATE` o `now()` son válidos porque no son restricciones y no se
 reevalúan al restaurar un backup. Las reglas que dependen de la fecha actual
 quedan para los triggers de `005_triggers.sql`.
 
+## R-001 · la integridad no depende del privilegio del llamador
+
+El hallazgo R-001 mostró que, con triggers `SECURITY INVOKER`, `app_rw`
+necesitaba `UPDATE`/`DELETE` sobre tablas sensibles y podía saltarse los
+triggers para modificar totales o stocks a mano. La corrección va en los
+archivos de definición (`db/migrations/004_procedimientos.sql`,
+`db/migrations/005_triggers.sql` y `db/migrations/007_roles.sql`): T1, T2, T7 y
+los procedures `sp_procesar_ingreso` / `sp_procesar_transferencia` pasan a
+`SECURITY DEFINER` con `SET search_path = pg_catalog, public`, y `app_rw` queda
+reducido a la matriz mínima: sin `UPDATE` de tabla completa y sin `DELETE`
+sobre `comprobante` ni `renglon_comprobante`. Así la API solo inserta las
+columnas permitidas y la base completa totales, descuenta stocks y audita con
+permisos elevados. La auditoría de precio (T7) registra `app.usuario` o, si no
+está seteado, `session_user` (no `current_user`, que dentro de DEFINER es el
+owner): la integridad ya no depende del privilegio del llamador.
+
 ## Verificación
 
 La migración se aplicó sobre una base vacía con PostgreSQL 16, ejecutando
