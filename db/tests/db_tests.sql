@@ -1181,8 +1181,8 @@ END $$;
 -- Seccion nueva al final del archivo, despues de la seccion 13. Cada caso es un
 -- bloque DO autocontenido: inserta sus propias filas, verifica el resultado,
 -- captura el error esperado en un sub-bloque anidado y limpia al final. Las
--- secciones 0 a 13 no se modifican. Los casos U-a/U-b/F-a/F-b son provisionales
--- de la decision D1 (RN-02/03/04): por eso van SIN numero de regla.
+-- secciones 0 a 13 no se modifican. La decision D1 se cerro el 2026-11-08:
+-- RN-02/03/04 ya van rotulados con sus casos a/b (plan_tests_26.md §5).
 
 -- 14.2 RN-01-a · Precio de venta unico para toda la red: la linea copia el precio vigente
 DO $$
@@ -1259,115 +1259,280 @@ BEGIN
     RAISE NOTICE 'OK RN-01-b: sala y stock_sala no exponen columnas de precio';
 END $$;
 
--- 14.4 U-a · Provisional D1: insertar un vino y un cliente validos
+-- 14.4 RN-02-a · Una sala pertenece a una sola localidad y la localidad tiene un solo encargado regional
 DO $$
 DECLARE
-    v_vino integer;
+    v_salas  integer;
+    v_enc    text;
+    v_cols   integer;
+    v_tablas integer;
 BEGIN
-    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
-    VALUES ('T26 U-a Vino', 'tinto', 2021, 750, 14.00, 1000.00, '20123456789')
-    RETURNING cod_vino INTO v_vino;
+    INSERT INTO localidad (id_localidad, codigo_postal, nombre, provincia, encargado_regional)
+    VALUES (9026, '5626', 'T26 RN-02 Localidad', 'Mendoza', 'T26 Encargado');
 
-    INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-    VALUES (9026, 'T26 U-a Cliente', 'socio', 'DNI', '26999001', 'Calle T26 1', 1, '2020-01-01', 10.00);
+    INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
+    VALUES (9026, 'T26 RN-02 Sala', 2, 9026);
 
-    RAISE NOTICE 'OK U-a: vino y cliente validos insertados';
-
-    DELETE FROM cliente WHERE tipo_documento = 'DNI' AND nro_documento = '26999001';
-    DELETE FROM vino WHERE cod_vino = v_vino;
-END $$;
-
--- 14.5 U-b · Provisional D1: duplicados rechazados por UNIQUE  -- esperado: 23505
-DO $$
-DECLARE
-    v_vino integer;
-BEGIN
-    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
-    VALUES ('T26 U-b Vino', 'tinto', 2021, 750, 14.00, 1000.00, '20123456789')
-    RETURNING cod_vino INTO v_vino;
-
-    -- Variante 1: vino duplicado por (nombre_comercial, anada, presentacion_ml).
-    BEGIN
-        INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
-        VALUES ('T26 U-b Vino', 'tinto', 2021, 750, 13.00, 1100.00, '20123456789');
-        RAISE EXCEPTION 'FAIL: vino duplicado no fallo' USING ERRCODE = 'Z0001';
-    EXCEPTION WHEN unique_violation THEN
-        NULL;
-    END;
-
-    -- Variante 2: cliente duplicado por (tipo_documento, nro_documento).
-    BEGIN
-        INSERT INTO cliente (nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-        VALUES ('T26 U-b Cliente', 'socio', 'DNI', '30123456', 'Calle T26 2', 1, '2020-01-01', 10.00);
-        RAISE EXCEPTION 'FAIL: cliente duplicado no fallo' USING ERRCODE = 'Z0001';
-    EXCEPTION WHEN unique_violation THEN
-        NULL;
-    END;
-
-    -- Variante 3: bodega duplicada por CUIT.
-    BEGIN
-        INSERT INTO bodega (cuit, razon_social, domicilio)
-        VALUES ('20123456789', 'T26 U-b Bodega', 'Calle T26 3');
-        RAISE EXCEPTION 'FAIL: bodega duplicada no fallo' USING ERRCODE = 'Z0001';
-    EXCEPTION WHEN unique_violation THEN
-        NULL;
-    END;
-
-    RAISE NOTICE 'OK U-b: duplicados de vino, cliente y bodega rechazados (23505)';
-
-    DELETE FROM vino WHERE cod_vino = v_vino;
-END $$;
-
--- 14.6 F-a · Provisional D1: vino con cuit_bodega existente
-DO $$
-DECLARE
-    v_vino integer;
-BEGIN
-    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
-    VALUES ('T26 F-a Vino', 'tinto', 2021, 750, 14.00, 1000.00, '20123456789')
-    RETURNING cod_vino INTO v_vino;
-
-    IF NOT EXISTS (SELECT 1 FROM vino WHERE cod_vino = v_vino) THEN
-        RAISE EXCEPTION 'FAIL: vino con bodega existente no se inserto';
+    -- La sala referencia exactamente una localidad.
+    SELECT count(*) INTO v_salas
+      FROM sala
+     WHERE id_sala = 9026 AND id_localidad = 9026;
+    IF v_salas <> 1 THEN
+        RAISE EXCEPTION 'FAIL: la sala 9026 no referencia exactamente una localidad (n=%)', v_salas;
     END IF;
 
-    RAISE NOTICE 'OK F-a: vino con cuit_bodega existente insertado';
+    -- La localidad expone el encargado regional en una unica columna.
+    SELECT encargado_regional INTO v_enc
+      FROM localidad
+     WHERE id_localidad = 9026;
+    IF v_enc IS DISTINCT FROM 'T26 Encargado' THEN
+        RAISE EXCEPTION 'FAIL: encargado regional inesperado: %', v_enc;
+    END IF;
 
-    DELETE FROM vino WHERE cod_vino = v_vino;
+    -- Control estructural: una sola columna de encargado, sin tabla de encargados.
+    SELECT count(*) INTO v_cols
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'localidad'
+       AND column_name LIKE 'encargado%';
+    IF v_cols <> 1 THEN
+        RAISE EXCEPTION 'FAIL: localidad expone % columnas de encargado', v_cols;
+    END IF;
+
+    SELECT count(*) INTO v_tablas
+      FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_type = 'BASE TABLE'
+       AND table_name LIKE '%encargado%';
+    IF v_tablas <> 0 THEN
+        RAISE EXCEPTION 'FAIL: existe una tabla de encargados (n=%)', v_tablas;
+    END IF;
+
+    RAISE NOTICE 'OK RN-02-a: una sala referencia una localidad y la localidad tiene una sola columna de encargado';
+
+    DELETE FROM sala WHERE id_sala = 9026;
+    DELETE FROM localidad WHERE id_localidad = 9026;
 END $$;
 
--- 14.7 F-b · Provisional D1: FK inexistente rechazada  -- esperado: 23503
+-- 14.5 RN-02-b · Sala sin localidad y localidad inexistente
+-- esperado: 23502 y 23503
 DO $$
 DECLARE
-    v_nro integer;
+    v_col  text;
+    v_cons text;
 BEGIN
-    -- Variante 1: vino con cuit_bodega inexistente.
+    -- Variante 1: sala con id_localidad nula.
     BEGIN
-        INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
-        VALUES ('T26 F-b Vino', 'tinto', 2021, 750, 14.00, 1000.00, '99999999999');
-        RAISE EXCEPTION 'FAIL: vino con cuit_bodega inexistente no fallo' USING ERRCODE = 'Z0001';
-    EXCEPTION WHEN foreign_key_violation THEN
-        NULL;
+        INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
+        VALUES (9027, 'T26 RN-02 Sin Loc', 2, NULL);
+        RAISE EXCEPTION 'FAIL: sala sin localidad no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN not_null_violation THEN
+        GET STACKED DIAGNOSTICS v_col = COLUMN_NAME;
+        IF v_col IS DISTINCT FROM 'id_localidad' THEN
+            RAISE EXCEPTION 'FAIL: columna inesperada: %', v_col;
+        END IF;
     END;
 
-    -- Variante 2: renglon de transferencia con cod_vino inexistente.
-    INSERT INTO transferencia (id_sala, fecha_confeccion)
-    VALUES (1, CURRENT_DATE) RETURNING nro_solicitud INTO v_nro;
-
+    -- Variante 2: sala con id_localidad inexistente.
     BEGIN
-        INSERT INTO renglon_transferencia (nro_solicitud, cod_vino, cantidad)
-        VALUES (v_nro, 999999, 1);
-        RAISE EXCEPTION 'FAIL: renglon con cod_vino inexistente no fallo' USING ERRCODE = 'Z0001';
+        INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
+        VALUES (9028, 'T26 RN-02 Fk Mala', 2, 999999);
+        RAISE EXCEPTION 'FAIL: sala con localidad inexistente no fallo' USING ERRCODE = 'Z0001';
     EXCEPTION WHEN foreign_key_violation THEN
-        NULL;
+        GET STACKED DIAGNOSTICS v_cons = CONSTRAINT_NAME;
+        IF v_cons IS DISTINCT FROM 'fk_sala_localidad' THEN
+            RAISE EXCEPTION 'FAIL: constraint inesperado: %', v_cons;
+        END IF;
     END;
 
-    RAISE NOTICE 'OK F-b: FK de bodega y de vino inexistentes rechazadas (23503)';
+    RAISE NOTICE 'OK RN-02-b: sala sin localidad (23502) y localidad inexistente (23503) rechazadas';
 
-    DELETE FROM transferencia WHERE nro_solicitud = v_nro;
+    -- Los sub-bloques revierten sus INSERT: no hay filas que limpiar.
 END $$;
 
--- 14.8 RN-05-a · Composicion 40 + 60: el vino nuevo pasa la validacion diferida
+-- 14.6 RN-03-a · Cada empleado trabaja en una sola sala
+DO $$
+DECLARE
+    v_id_sala integer;
+    v_fk      integer;
+    v_tablas  integer;
+BEGIN
+    INSERT INTO empleado (cuit, nombre, fecha_ingreso, salario, id_sala)
+    VALUES ('20999990001', 'T26 RN-03 Empleado', '2021-03-01', 100000.00, 1);
+
+    SELECT id_sala INTO v_id_sala FROM empleado WHERE cuit = '20999990001';
+    IF v_id_sala IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'FAIL: el empleado no referencia la sala 1: %', v_id_sala;
+    END IF;
+
+    -- Control estructural: una sola FK de empleado hacia sala, sin tabla puente.
+    SELECT count(DISTINCT tc.constraint_name) INTO v_fk
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_schema = tc.constraint_schema
+       AND ccu.constraint_name = tc.constraint_name
+     WHERE tc.table_schema = 'public'
+       AND tc.table_name = 'empleado'
+       AND tc.constraint_type = 'FOREIGN KEY'
+       AND ccu.table_schema = 'public'
+       AND ccu.table_name = 'sala';
+    IF v_fk <> 1 THEN
+        RAISE EXCEPTION 'FAIL: empleado tiene % FK hacia sala', v_fk;
+    END IF;
+
+    SELECT count(*) INTO v_tablas
+      FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_type = 'BASE TABLE'
+       AND table_name LIKE '%empleado%sala%';
+    IF v_tablas <> 0 THEN
+        RAISE EXCEPTION 'FAIL: existe una tabla empleado-sala (n=%)', v_tablas;
+    END IF;
+
+    RAISE NOTICE 'OK RN-03-a: el empleado referencia una unica sala y no hay tabla puente';
+
+    DELETE FROM empleado WHERE cuit = '20999990001';
+END $$;
+
+-- 14.7 RN-03-b · Empleado sin sala y sala inexistente
+-- esperado: 23502 y 23503
+DO $$
+DECLARE
+    v_col  text;
+    v_cons text;
+BEGIN
+    -- Variante 1: empleado con id_sala nula.
+    BEGIN
+        INSERT INTO empleado (cuit, nombre, fecha_ingreso, salario, id_sala)
+        VALUES ('20999990002', 'T26 RN03-b Sin Sala', '2021-03-01', 100000.00, NULL);
+        RAISE EXCEPTION 'FAIL: empleado sin sala no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN not_null_violation THEN
+        GET STACKED DIAGNOSTICS v_col = COLUMN_NAME;
+        IF v_col IS DISTINCT FROM 'id_sala' THEN
+            RAISE EXCEPTION 'FAIL: columna inesperada: %', v_col;
+        END IF;
+    END;
+
+    -- Variante 2: empleado con id_sala inexistente.
+    BEGIN
+        INSERT INTO empleado (cuit, nombre, fecha_ingreso, salario, id_sala)
+        VALUES ('20999990003', 'T26 RN03-b Fk Mala', '2021-03-01', 100000.00, 999999);
+        RAISE EXCEPTION 'FAIL: empleado con sala inexistente no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN foreign_key_violation THEN
+        GET STACKED DIAGNOSTICS v_cons = CONSTRAINT_NAME;
+        IF v_cons IS DISTINCT FROM 'fk_empleado_sala' THEN
+            RAISE EXCEPTION 'FAIL: constraint inesperado: %', v_cons;
+        END IF;
+    END;
+
+    RAISE NOTICE 'OK RN-03-b: empleado sin sala (23502) y sala inexistente (23503) rechazados';
+
+    -- Los sub-bloques revierten sus INSERT: no hay filas que limpiar.
+END $$;
+
+-- 14.8 RN-04-a · Una parcela tiene una sola cepa y se cosecha una vez por campania
+DO $$
+DECLARE
+    v_cepa   integer;
+    v_lotes  integer;
+    v_fk     integer;
+    v_tablas integer;
+BEGIN
+    INSERT INTO parcela (id_finca, nro_parcela, superficie_hectareas, anio_plantacion, id_cepa)
+    VALUES (1, 9026, 2.50, 2015, 1);
+
+    INSERT INTO lote_uva (nro_lote, id_finca, nro_parcela, campania, fecha_cosecha, kilos_cosechados, cuit_bodega)
+    VALUES (9026, 1, 9026, 2026, '2026-03-15', 1200.00, '20123456789');
+
+    SELECT id_cepa INTO v_cepa
+      FROM parcela
+     WHERE id_finca = 1 AND nro_parcela = 9026;
+    IF v_cepa IS DISTINCT FROM 1 THEN
+        RAISE EXCEPTION 'FAIL: la parcela no tiene una sola cepa: %', v_cepa;
+    END IF;
+
+    SELECT count(*) INTO v_lotes
+      FROM lote_uva
+     WHERE id_finca = 1 AND nro_parcela = 9026 AND campania = 2026;
+    IF v_lotes <> 1 THEN
+        RAISE EXCEPTION 'FAIL: hay % lotes para la parcela y campania', v_lotes;
+    END IF;
+
+    -- Control estructural: una sola FK de parcela hacia cepa, sin tabla puente.
+    SELECT count(DISTINCT tc.constraint_name) INTO v_fk
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_schema = tc.constraint_schema
+       AND ccu.constraint_name = tc.constraint_name
+     WHERE tc.table_schema = 'public'
+       AND tc.table_name = 'parcela'
+       AND tc.constraint_type = 'FOREIGN KEY'
+       AND ccu.table_schema = 'public'
+       AND ccu.table_name = 'cepa';
+    IF v_fk <> 1 THEN
+        RAISE EXCEPTION 'FAIL: parcela tiene % FK hacia cepa', v_fk;
+    END IF;
+
+    SELECT count(*) INTO v_tablas
+      FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_type = 'BASE TABLE'
+       AND table_name LIKE '%parcela%cepa%';
+    IF v_tablas <> 0 THEN
+        RAISE EXCEPTION 'FAIL: existe una tabla parcela-cepa (n=%)', v_tablas;
+    END IF;
+
+    RAISE NOTICE 'OK RN-04-a: la parcela tiene una cepa y un unico lote por campania';
+
+    DELETE FROM lote_uva WHERE nro_lote = 9026;
+    DELETE FROM parcela WHERE id_finca = 1 AND nro_parcela = 9026;
+END $$;
+
+-- 14.9 RN-04-b · Cosecha duplicada por campania y parcela sin cepa
+-- esperado: 23505 y 23502
+DO $$
+DECLARE
+    v_cons text;
+    v_col  text;
+BEGIN
+    -- Soporte: parcela propia y su primer lote de la campania 2026.
+    INSERT INTO parcela (id_finca, nro_parcela, superficie_hectareas, anio_plantacion, id_cepa)
+    VALUES (1, 9027, 2.50, 2015, 1);
+
+    INSERT INTO lote_uva (nro_lote, id_finca, nro_parcela, campania, fecha_cosecha, kilos_cosechados, cuit_bodega)
+    VALUES (9027, 1, 9027, 2026, '2026-03-15', 1200.00, '20123456789');
+
+    -- Variante 1: segundo lote con la misma parcela y campania.
+    BEGIN
+        INSERT INTO lote_uva (nro_lote, id_finca, nro_parcela, campania, fecha_cosecha, kilos_cosechados, cuit_bodega)
+        VALUES (9028, 1, 9027, 2026, '2026-03-20', 1000.00, '20123456789');
+        RAISE EXCEPTION 'FAIL: cosecha duplicada por campania no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN unique_violation THEN
+        GET STACKED DIAGNOSTICS v_cons = CONSTRAINT_NAME;
+        IF v_cons IS DISTINCT FROM 'uq_lote_parcela_campania' THEN
+            RAISE EXCEPTION 'FAIL: constraint inesperado: %', v_cons;
+        END IF;
+    END;
+
+    -- Variante 2: parcela con id_cepa nula.
+    BEGIN
+        INSERT INTO parcela (id_finca, nro_parcela, superficie_hectareas, anio_plantacion, id_cepa)
+        VALUES (1, 9028, 2.50, 2015, NULL);
+        RAISE EXCEPTION 'FAIL: parcela sin cepa no fallo' USING ERRCODE = 'Z0001';
+    EXCEPTION WHEN not_null_violation THEN
+        GET STACKED DIAGNOSTICS v_col = COLUMN_NAME;
+        IF v_col IS DISTINCT FROM 'id_cepa' THEN
+            RAISE EXCEPTION 'FAIL: columna inesperada: %', v_col;
+        END IF;
+    END;
+
+    RAISE NOTICE 'OK RN-04-b: cosecha duplicada (23505) y parcela sin cepa (23502) rechazadas';
+
+    DELETE FROM lote_uva WHERE nro_lote = 9027;
+    DELETE FROM parcela WHERE id_finca = 1 AND nro_parcela = 9027;
+END $$;
+
+-- 14.10 RN-05-a · Composicion 40 + 60: el vino nuevo pasa la validacion diferida
 DO $$
 DECLARE
     v_vino integer;
@@ -1399,7 +1564,7 @@ BEGIN
     DELETE FROM cepa WHERE id_cepa IN (902601, 902602);
 END $$;
 
--- 14.9 RN-05-b · Composicion 60 + 30: la validacion diferida rechaza el vino
+-- 14.11 RN-05-b · Composicion 60 + 30: la validacion diferida rechaza el vino
 -- esperado: P0001 al COMMIT (aqui forzado con SET CONSTRAINTS IMMEDIATE)
 DO $$
 DECLARE
@@ -1445,7 +1610,7 @@ BEGIN
     DELETE FROM cepa WHERE id_cepa IN (902603, 902604);
 END $$;
 
--- 14.10 RN-05-c · Composicion diferida: 60 solo no falla y completar con 40 tampoco
+-- 14.12 RN-05-c · Composicion diferida: 60 solo no falla y completar con 40 tampoco
 DO $$
 DECLARE
     v_vino integer;
@@ -1481,7 +1646,7 @@ BEGIN
     DELETE FROM cepa WHERE id_cepa IN (902605, 902606);
 END $$;
 
--- 14.11 RN-06-a · Descuento por tipo de cliente: mapeo exacto y NULL (STRICT)
+-- 14.13 RN-06-a · Descuento por tipo de cliente: mapeo exacto y NULL (STRICT)
 DO $$
 DECLARE
     v_socio        numeric(5,2);
@@ -1508,7 +1673,7 @@ BEGIN
     RAISE NOTICE 'OK RN-06-a: socio 10.00, distribuidor 20.00, exportador 30.00 y NULL';
 END $$;
 
--- 14.12 RN-06-b · Descuento por tipo de cliente: tipo desconocido rechazado
+-- 14.14 RN-06-b · Descuento por tipo de cliente: tipo desconocido rechazado
 -- esperado: P0001
 DO $$
 DECLARE
@@ -1527,7 +1692,7 @@ BEGIN
     RAISE NOTICE 'OK RN-06-b: tipo desconocido rechazado con el mensaje exacto de RN-06';
 END $$;
 
--- 14.13 RN-07-a · Permiso de exportacion con vencimiento posterior a la emision
+-- 14.15 RN-07-a · Permiso de exportacion con vencimiento posterior a la emision
 DO $$
 BEGIN
     INSERT INTO permiso_exportacion (id_cliente, cod_permiso, fecha_emision, fecha_vencimiento)
@@ -1538,7 +1703,7 @@ BEGIN
     DELETE FROM permiso_exportacion WHERE id_cliente = 2 AND cod_permiso = 'T26W2-RN07A';
 END $$;
 
--- 14.14 RN-07-b · Permiso con vencimiento anterior o igual a la emision
+-- 14.16 RN-07-b · Permiso con vencimiento anterior o igual a la emision
 -- esperado: 23514
 DO $$
 DECLARE
@@ -1574,7 +1739,7 @@ BEGIN
      WHERE id_cliente = 2 AND cod_permiso IN ('T26W2-RN07B1', 'T26W2-RN07B2');
 END $$;
 
--- 14.15 RN-08-a · Calculo de importes de linea y de cabecera: socio 10 % y redondeo
+-- 14.17 RN-08-a · Calculo de importes de linea y de cabecera: socio 10 % y redondeo
 DO $$
 DECLARE
     v_vino1 integer;
@@ -1666,14 +1831,14 @@ BEGIN
     DELETE FROM vino WHERE cod_vino IN (v_vino1, v_vino2);
 END $$;
 
--- 14.16 RN-08-b · Calculo de importes: N/A justificado
+-- 14.18 RN-08-b · Calculo de importes: N/A justificado
 -- esperado: sin caso de falla; ver plan_tests_26.md §5 RN-08
 DO $$
 BEGIN
     RAISE NOTICE 'OK RN-08-b: sin caso de falla; los limites los fijan los CHECK de 002';
 END $$;
 
--- 14.17 RN-09-a · Stock suficiente: vender exactamente el disponible
+-- 14.19 RN-09-a · Stock suficiente: vender exactamente el disponible
 DO $$
 DECLARE
     v_vino  integer;
@@ -1721,7 +1886,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.18 RN-09-b · Stock insuficiente: vender 11 con 10 disponibles
+-- 14.20 RN-09-b · Stock insuficiente: vender 11 con 10 disponibles
 -- esperado: P0001
 DO $$
 DECLARE
@@ -1779,7 +1944,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.19 RN-09-c · Stock insuficiente: vino sin fila en stock_sala (disponible 0)
+-- 14.21 RN-09-c · Stock insuficiente: vino sin fila en stock_sala (disponible 0)
 -- esperado: P0001
 DO $$
 DECLARE
@@ -1824,7 +1989,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.20 RN-13-a · Auditoria de precio con app.usuario: 1 fila con el usuario y los importes
+-- 14.22 RN-13-a · Auditoria de precio con app.usuario: 1 fila con el usuario y los importes
 DO $$
 DECLARE
     v_vino      integer;
@@ -1872,7 +2037,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.21 RN-13-b · Update de otro atributo: no audita (la clausula WHEN descarta)
+-- 14.23 RN-13-b · Update de otro atributo: no audita (la clausula WHEN descarta)
 DO $$
 DECLARE
     v_vino integer;
@@ -1900,7 +2065,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.22 RN-13-c · Auditoria de precio sin app.usuario: usuario = current_user
+-- 14.24 RN-13-c · Auditoria de precio sin app.usuario: usuario = current_user
 DO $$
 DECLARE
     v_vino     integer;
@@ -1938,7 +2103,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.23 RN-14-a · Vino sin movimientos: el DELETE funciona
+-- 14.25 RN-14-a · Vino sin movimientos: el DELETE funciona
 DO $$
 DECLARE
     v_vino integer;
@@ -1961,7 +2126,7 @@ BEGIN
     RAISE NOTICE 'OK RN-14-a: vino sin movimientos borrado correctamente';
 END $$;
 
--- 14.24 RN-14-b · Vino con renglon_comprobante: el DELETE falla por RESTRICT
+-- 14.26 RN-14-b · Vino con renglon_comprobante: el DELETE falla por RESTRICT
 -- esperado: 23503
 DO $$
 DECLARE
@@ -2003,7 +2168,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.25 RN-14-c · Vino con auditoria_precio: el DELETE falla por RESTRICT
+-- 14.27 RN-14-c · Vino con auditoria_precio: el DELETE falla por RESTRICT
 -- esperado: 23503
 DO $$
 DECLARE
@@ -2033,7 +2198,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.26 RN-15-a · Graduacion dentro del rango: 14.00 aceptada
+-- 14.28 RN-15-a · Graduacion dentro del rango: 14.00 aceptada
 DO $$
 DECLARE
     v_vino  integer;
@@ -2056,7 +2221,7 @@ BEGIN
     DELETE FROM vino WHERE cod_vino = v_vino;
 END $$;
 
--- 14.27 RN-15-b · Graduacion fuera del rango: 25.00 rechazada
+-- 14.29 RN-15-b · Graduacion fuera del rango: 25.00 rechazada
 -- esperado: 23514
 DO $$
 DECLARE
