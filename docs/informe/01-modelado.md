@@ -6,24 +6,51 @@
 
 ## 1.4 · Catálogos en CSV (P2)
 
-**Estado:** pendiente del Anexo B.
+**Estado:** completado.
 
-Los catálogos deben copiar exactamente los valores del Anexo B del enunciado.
-Ese anexo todavía no está disponible en el repositorio, por lo que no se
-generaron valores provisorios para no contaminar la carga con datos inventados.
+Se generaron los catálogos de `db/seed/catalogos/` copiando los valores del
+Anexo B y los códigos postales de `codigos-postales-mendoza.md`. Los archivos
+están en UTF-8 sin BOM, con separador coma y cabeceras en `snake_case`.
 
-Con `001_esquema.sql` ya disponible, los catálogos que alimentan tablas son:
+| Archivo | Cabecera | Filas | Destino |
+|---|---|---:|---|
+| `cepas.csv` | `nombre,tipo` | 12 | `cepa` |
+| `maridajes.csv` | `nombre,temperatura_servicio` | 8 | `maridaje` |
+| `localidades_mendoza.csv` | `codigo_postal,nombre,provincia` | 18 | `localidad` |
+| `tipos_vino.csv` | `tipo` | 4 | Lista de referencia para `vino.tipo` |
+| `presentaciones.csv` | `presentacion_ml` | 5 | Lista de referencia para `vino.presentacion_ml` |
 
-- `cepas.csv`: `id_cepa,nombre,tipo`, para la tabla `cepa`.
-- `maridajes.csv`: `id_maridaje,nombre,temperatura_servicio`, para `maridaje`.
-- `localidades_mendoza.csv`: `id_localidad,codigo_postal,nombre,provincia,encargado_regional`,
-  para `localidad`.
+- **Cepas:** 7 tintas y 5 blancas. Se respetaron los nombres exactos del Anexo
+  B.1; no se agregaron Cabernet Franc ni Viognier.
+- **Maridajes:** 8 filas con la temperatura única del Anexo B.2.
+- **Localidades:** 18 departamentos de Mendoza, con código postal de 4 dígitos
+  único y `provincia = 'Mendoza'`. El CSV no incluye `id_localidad` ni
+  `encargado_regional`.
+- **Tipos y presentaciones:** listas de referencia para validar los `CHECK` de
+  `002_constraints.sql`; no se cargan en tablas propias.
+- **Sin IDs:** las claves subrogadas las genera PostgreSQL. `codigo_postal` se
+  usa como clave natural de `localidad`; el esquema físico todavía conserva
+  `id_localidad`, pendiente en la issue #6.
+- **Encargado regional:** se completará en `seed.py` con Faker `es_AR` y semilla
+  fija, después de cargar las localidades. No se inventa en el CSV.
 
-Los tipos de vino y las presentaciones se validan con `CHECK` en
-`002_constraints.sql` y se usan como listas de valores para la carga, porque
-`vino` guarda `tipo` y `presentacion_ml` como atributos. Todos los archivos
-deberán estar en UTF-8, sin BOM, con cabecera en `snake_case` y separador coma.
-La validación contra el Anexo B queda como criterio de aceptación de la tarea.
+El orden de carga es fijo: `cepas` → `maridajes` → `localidades`. Al no incluir
+IDs y reiniciar las identidades entre corridas, dos ejecuciones con la misma
+semilla producen los mismos datos.
+
+**Cómo verificar:** con `001_esquema.sql` y `002_constraints.sql` aplicados en
+una base temporal, cargar los tres catálogos con `\copy` y comprobar:
+
+```sql
+SELECT 'cepa' AS tabla, count(*) AS filas, count(DISTINCT nombre) AS unicos FROM cepa
+UNION ALL SELECT 'maridaje', count(*), count(DISTINCT nombre) FROM maridaje
+UNION ALL SELECT 'localidad', count(*), count(DISTINCT codigo_postal) FROM localidad;
+```
+
+Resultado esperado: `cepa` 12/12, `maridaje` 8/8 y `localidad` 18/18. También se
+verificó que 7 cepas son tintas, 5 blancas, que las 18 localidades son de
+Mendoza y que una recarga con `TRUNCATE ... RESTART IDENTITY CASCADE` conserva
+los mismos IDs y el mismo contenido.
 
 ## 1.5 · Normalización a 3FN (P2)
 

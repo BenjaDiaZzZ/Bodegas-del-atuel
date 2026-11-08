@@ -3,15 +3,48 @@
 -- Rol P3 · Roles y privilegios mínimos.
 --
 -- Requisito de la etapa 2: 3 roles.
---   bda_owner → propietario lógico de la base y de los objetos.
---   app_rw    → lectura/escritura para la API REST (nunca DDL).
+--   bda_owner  → propietario lógico de la base y de los objetos.
+--   app_rw     → lectura/escritura mínima para la API REST (nunca DDL).
 --   reporte_ro → solo lectura para reportes.
 --
+-- PRINCIPIO DE ESTA VERSIÓN: ninguna concesión ni revocación aplica a
+-- grupos de objetos. Toda sentencia enumera los objetos de forma explícita y
+-- cada bloque indica el requisito que lo justifica (operación OpenAPI,
+-- trigger de 005 o procedimiento de 004). Así el análisis de superficie es
+-- auditable línea por línea y el requisito P1 (sin UPDATE ni DELETE de
+-- renglon_comprobante para app_rw) es verificable.
+--
+-- Verificación automatizada: db/tests/test_007_roles.sql (matriz en ambos
+-- sentidos, denegaciones vivas 42501, fugas por PUBLIC y humo de la cadena
+-- SECURITY INVOKER como app_rw).
+--
+-- RESULTADO EMPÍRICO (PostgreSQL 16.15, probado por P3):
+--   SELECT ... FOR UPDATE exige privilegio UPDATE en PostgreSQL 16: con un
+--   rol SELECT-only la sentencia falla con SQLSTATE 42501 (permission
+--   denied) tanto con filas que bloquear como sobre una tabla vacía (el
+--   privilegio se valida al iniciar la ejecución, no por fila; verificado
+--   por P3 sobre renglon_transferencia y stock_sala). Por eso el
+--   procedimiento sp_procesar_transferencia (004, bloqueo de renglones con
+--   FOR UPDATE) justifica UPDATE —nunca DELETE— sobre renglon_ingreso y
+--   renglon_transferencia.
+--
+-- OBSERVACIÓN EMPÍRICA SOBRE FUNCIONES TRIGGER: las 8 funciones trigger de
+-- 005 se disparan correctamente con app_rw sin tener EXECUTE concedido sobre
+-- ellas (la ejecución del trigger no exige el privilegio del rol disparador).
+-- EXECUTE solo se concede a las rutinas que el código de la API llama
+-- directamente. Verificado en la sección F de test_007_roles.sql.
+--
 -- Decisiones de seguridad:
---   - Se revocan los privilegios de PUBLIC sobre el esquema y los objetos.
---   - app_rw recibe solo el DML permitido, uso de secuencias y EXECUTE sobre
---     funciones/procedimientos. No puede crear objetos.
---   - reporte_ro recibe solo SELECT. No puede ejecutar rutinas ni usar secuencias.
+--   - Se revocan los privilegios de PUBLIC sobre el esquema y sobre cada
+--     objeto por nombre.
+--   - app_rw recibe solo el DML de la matriz de abajo, USAGE en las 6
+--     secuencias que usa y EXECUTE en las 6 rutinas contratadas. No puede
+--     crear objetos. Ni UPDATE ni DELETE sobre renglon_comprobante.
+--   - reporte_ro recibe solo SELECT sobre tablas y vistas. No ejecuta rutinas
+--     ni usa secuencias.
+--   - No hay privilegios por defecto de escritura: toda tabla futura
+--     escribible exige su GRANT explícito aquí (solo SELECT queda por
+--     defecto para reporte_ro).
 --   - Las contraseñas NO se escriben en este archivo. Los roles se crean sin
 --     LOGIN y `scripts/set_role_passwords.sh` les asigna la contraseña desde
 --     DB_PASSWORD y REPORTE_RO_PASSWORD. Nunca se commitea .env.
@@ -81,9 +114,9 @@ $$;
 COMMENT ON ROLE bda_owner IS
     'Propietario lógico de la base y de los objetos del TPI Bodegas del Atuel.';
 COMMENT ON ROLE app_rw IS
-    'Rol de lectura/escritura usado por la API REST. Sin permisos DDL.';
+    'Rol de lectura/escritura con DML mínimo de la matriz de 007, usado por la API REST. Sin UPDATE ni DELETE de renglon_comprobante. Sin permisos DDL.';
 COMMENT ON ROLE reporte_ro IS
-    'Rol de solo lectura usado por los reportes. Sin permisos de escritura.';
+    'Rol de solo lectura usado por los reportes. Sin permisos de escritura ni EXECUTE.';
 
 -- -----------------------------------------------------------------------------
 -- 2. Cerrar el esquema público
@@ -95,138 +128,237 @@ GRANT USAGE ON SCHEMA public TO bda_owner, app_rw, reporte_ro;
 GRANT CREATE ON SCHEMA public TO bda_owner;
 
 -- -----------------------------------------------------------------------------
--- 3. Revocar privilegios heredados por PUBLIC
---    Las funciones reciben EXECUTE para PUBLIC por defecto; se revoca tanto
---    para los objetos actuales como para los futuros.
--- -----------------------------------------------------------------------------
-REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM PUBLIC;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
-REVOKE ALL ON ALL ROUTINES  IN SCHEMA public FROM PUBLIC;
+-- 3. Matriz de privilegios de app_rw y su origen
+--    (derivada de: operaciones de escritura de api/openapi.yaml, DML de los
+--    triggers de 005 y DML de los procedimientos de 004)
+--
+--   Tabla                    INS UPD DEL · Justificación
+--   ------------------------ --- --- --- + --------------------------------
+--   vino                      SÍ SÍ SÍ · crearVino/actualizarVino/eliminarVino; T7 audita el precio; DELETE cascada a composición y maridajes
+--   cliente                   SÍ SÍ SÍ · crearCliente/actualizarCliente/eliminarCliente; baja en cascada de subtipos
+--   composicion               SÍ – SÍ · crearVino y PUT /vinos/{cod} reemplaza la composición (DELETE+INSERT); T8 valida RN-05
+--   vino_maridaje             SÍ – SÍ · idem, reemplazo de maridajes
+--   socio                     SÍ – – · crearCliente (tipo socio); baja solo por cascada desde cliente
+--   distribuidor              SÍ SÍ – · crearCliente y PUT (zona_cobertura, nro_habilitacion)
+--   exportador                SÍ SÍ – · crearCliente y PUT (pais_destino_principal)
+--   permiso_exportacion       SÍ – SÍ · alta en crearCliente y reemplazo en PUT /clientes (DELETE+INSERT)
+--   comprobante               SÍ SÍ – · crearComprobante; T2 recalcula subtotal/descuento/total
+--   renglon_comprobante       SÍ – – · crearComprobante envía (cod_vino, cantidad); T1 completa la línea y T2 descuenta stock. SIN UPDATE NI DELETE (requisito P1: el documento es inmutable y T2 mantiene el total)
+--   ingreso                   SÍ SÍ – · crearIngreso, terminarIngreso; FOR UPDATE de cabecera en sp_procesar_ingreso
+--   renglon_ingreso           SÍ SÍ – · agregarRenglonIngreso; UPDATE solo por la Regla FOR UPDATE (resultado empírico de arriba)
+--   transferencia             SÍ SÍ – · crearTransferencia, terminarTransferencia; FOR UPDATE de cabecera en sp_procesar_transferencia
+--   renglon_transferencia     SÍ SÍ – · agregarRenglonTransferencia; UPDATE solo por el FOR UPDATE de renglones en sp_procesar_transferencia
+--   stock_deposito            SÍ SÍ – · upsert en sp_procesar_ingreso; descuento en sp_procesar_transferencia
+--   stock_sala                SÍ SÍ – · T2 descuenta stock; FOR UPDATE de T1 valida RN-09; upsert en sp_procesar_transferencia
+--   auditoria_precio          SÍ – – · T7 (AFTER UPDATE de vino) registra RN-13 con privilegios de app_rw
+--   Localidad, cepa, bodega, transportista, maridaje, finca, sala,
+--   empleado, parcela, lote_uva, transportista_localidad, analisis_calidad
+--                             –   –   – · solo consultas/catálogos para la API (SELECT)
+--
+--   DELETE de composición/vino_maridaje/permiso_exportacion es necesario
+--   porque el reemplazo de colecciones del PUT es DELETE+INSERT directo de
+--   la API. Los borradores en cascada (vino, cliente hijos) corren con los
+--   privilegios del propietario y no exigen permisos del llamador.
+--
+--   Secuencias USAGE: vino_cod_vino_seq, cliente_id_cliente_seq,
+--   comprobante_nro_comprobante_seq, ingreso_cod_ingreso_seq,
+--   transferencia_nro_solicitud_seq, auditoria_precio_id_auditoria_seq
+--   (inserta app_rw por sí o por trigger T7).
+--
+--   Rutinas EXECUTE: fn_descuento_cliente, fn_total_comprobante,
+--   fn_stock_sala, fn_antiguedad_anios, sp_procesar_ingreso,
+--   sp_procesar_transferencia.
+-- =============================================================================
 
+-- -----------------------------------------------------------------------------
+-- 4. Revocar a PUBLIC todo privilegio por defecto, objeto por objeto
+--    Las tablas y vistas nacen sin ACL (solo PUBLIC no recibe nada dentro de
+--    los defaults), pero el REVOKE explícito fija una ACL vacía por objeto:
+--    así ninguna concesión quedará oculta por un default y el estado queda
+--    asertable (test_007_roles.sql, sección D).
+-- -----------------------------------------------------------------------------
+-- Operando/catálogo, entidades y movimientos (las 29 tablas).
+REVOKE ALL PRIVILEGES ON TABLE localidad, cepa, bodega, transportista,
+    maridaje, finca, sala, empleado, parcela, vino, cliente, lote_uva,
+    composicion, vino_maridaje, socio, distribuidor, exportador,
+    permiso_exportacion, transportista_localidad, analisis_calidad,
+    auditoria_precio, comprobante, renglon_comprobante, ingreso,
+    renglon_ingreso, transferencia, renglon_transferencia, stock_deposito,
+    stock_sala
+    FROM PUBLIC;
+
+-- Las 4 vistas de reportes y fichas.
+REVOKE ALL PRIVILEGES ON TABLE vw_stock_total_vino, vw_ventas_mensuales_sala,
+    vw_documentos_pendientes, vw_ficha_vino
+    FROM PUBLIC;
+
+-- Las 13 secuencias de las tablas con PK identity.
+REVOKE ALL PRIVILEGES ON SEQUENCE localidad_id_localidad_seq, cepa_id_cepa_seq,
+    transportista_id_transportista_seq, maridaje_id_maridaje_seq,
+    finca_id_finca_seq, sala_id_sala_seq, cliente_id_cliente_seq,
+    analisis_calidad_id_analisis_seq, auditoria_precio_id_auditoria_seq,
+    comprobante_nro_comprobante_seq, ingreso_cod_ingreso_seq,
+    transferencia_nro_solicitud_seq, vino_cod_vino_seq
+    FROM PUBLIC;
+
+-- Las 14 rutinas de 003 (negocio), 004 (procedimientos) y 005 (triggers).
+-- PUBLIC recibe EXECUTE por defecto en las funciones: aquí se quita.
+REVOKE ALL PRIVILEGES ON ROUTINE fn_descuento_cliente(varchar),
+    fn_stock_sala(integer, integer), fn_antiguedad_anios(date),
+    fn_total_comprobante(integer), sp_procesar_ingreso(integer),
+    sp_procesar_transferencia(integer), fn_tg_renglon_venta_completar(),
+    fn_tg_renglon_venta_actualizar(), fn_tg_ingreso_estado(),
+    fn_tg_transferencia_estado(), fn_tg_transferencia_fecha(),
+    fn_tg_renglon_documento_bloqueo(), fn_tg_vino_precio_auditoria(),
+    fn_tg_composicion_cien()
+    FROM PUBLIC;
+
+-- -----------------------------------------------------------------------------
+-- 5. Propietario lógico: control total, objeto por objeto
+-- -----------------------------------------------------------------------------
+-- bda_owner es el fondo de seguridad de la operatoria: si un día la API
+-- requiere un acceso distinto de DML, es el rol que restaura o transfiere lo
+-- que app_rw no puede tocar.
+GRANT ALL PRIVILEGES ON TABLE localidad, cepa, bodega, transportista,
+    maridaje, finca, sala, empleado, parcela, vino, cliente, lote_uva,
+    composicion, vino_maridaje, socio, distribuidor, exportador,
+    permiso_exportacion, transportista_localidad, analisis_calidad,
+    auditoria_precio, comprobante, renglon_comprobante, ingreso,
+    renglon_ingreso, transferencia, renglon_transferencia, stock_deposito,
+    stock_sala
+    TO bda_owner;
+
+-- En vistas: control total también (las vistas no son operandos, pero el
+-- propietario decide).
+GRANT ALL PRIVILEGES ON TABLE vw_stock_total_vino, vw_ventas_mensuales_sala,
+    vw_documentos_pendientes, vw_ficha_vino
+    TO bda_owner;
+
+GRANT ALL PRIVILEGES ON SEQUENCE localidad_id_localidad_seq, cepa_id_cepa_seq,
+    transportista_id_transportista_seq, maridaje_id_maridaje_seq,
+    finca_id_finca_seq, sala_id_sala_seq, cliente_id_cliente_seq,
+    analisis_calidad_id_analisis_seq, auditoria_precio_id_auditoria_seq,
+    comprobante_nro_comprobante_seq, ingreso_cod_ingreso_seq,
+    transferencia_nro_solicitud_seq, vino_cod_vino_seq
+    TO bda_owner;
+
+GRANT ALL PRIVILEGES ON ROUTINE fn_descuento_cliente(varchar),
+    fn_stock_sala(integer, integer), fn_antiguedad_anios(date),
+    fn_total_comprobante(integer), sp_procesar_ingreso(integer),
+    sp_procesar_transferencia(integer), fn_tg_renglon_venta_completar(),
+    fn_tg_renglon_venta_actualizar(), fn_tg_ingreso_estado(),
+    fn_tg_transferencia_estado(), fn_tg_transferencia_fecha(),
+    fn_tg_renglon_documento_bloqueo(), fn_tg_vino_precio_auditoria(),
+    fn_tg_composicion_cien()
+    TO bda_owner;
+
+-- -----------------------------------------------------------------------------
+-- 6. app_rw: DML mínimo según la matriz de la sección 3
+-- -----------------------------------------------------------------------------
+-- SELECT: toda la API lee. Tablas (consultas, listados, obtención),
+-- operaciones GET y de listado incluidos los reportes internos.
+GRANT SELECT ON TABLE localidad, cepa, bodega, transportista, maridaje, finca,
+    sala, empleado, parcela, vino, cliente, lote_uva, composicion,
+    vino_maridaje, socio, distribuidor, exportador, permiso_exportacion,
+    transportista_localidad, analisis_calidad, auditoria_precio, comprobante,
+    renglon_comprobante, ingreso, renglon_ingreso, transferencia,
+    renglon_transferencia, stock_deposito, stock_sala
+    TO app_rw;
+
+-- SELECT en vistas: GET /vinos/{cod} usa vw_ficha_vino y detalles para
+-- consultas; reportes puntuales de la API.
+GRANT SELECT ON TABLE vw_stock_total_vino, vw_ventas_mensuales_sala,
+    vw_documentos_pendientes, vw_ficha_vino
+    TO app_rw;
+
+-- INSERT: escrituras contratadas de la API (POST) + auditoria_precio que
+-- el trigger T7 inserta con privilegios de app_rw. NO renglon_comprobante
+-- UPDATE/DELETE (ver comentario en la sección 3): el renglón es inmutable.
+GRANT INSERT ON TABLE vino, cliente, composicion, vino_maridaje, socio,
+    distribuidor, exportador, permiso_exportacion, comprobante,
+    renglon_comprobante, ingreso, renglon_ingreso, transferencia,
+    renglon_transferencia, stock_deposito, stock_sala, auditoria_precio
+    TO app_rw;
+
+-- UPDATE: operandos modificables por la API (vino, cliente y los atributos
+-- propios de distribuidor y exportador por PUT), cabeceras de documentos
+-- (terminar*), stocks y los recálculos de T2. renglon_ingreso y
+-- renglon_transferencia reciben UPDATE solo por el bloqueo SELECT ... FOR
+-- UPDATE de sp_procesar_* (resultado empírico del encabezado). Ni
+-- renglon_comprobante (requisito P1) ni las demás tablas reciben UPDATE.
+GRANT UPDATE ON TABLE vino, cliente, comprobante, stock_sala, stock_deposito,
+    ingreso, transferencia, renglon_ingreso, renglon_transferencia,
+    distribuidor, exportador
+    TO app_rw;
+
+-- DELETE: solo bajas directas del contrato: DELETE /vinos y DELETE
+-- /clientes, y el reemplazo de colecciones del PUT (composición, maridajes
+-- y permisos como DELETE+INSERT). Las demás bajas son cascadas desde vino o
+-- cliente y no requieren permisos sobre el hijo.
+GRANT DELETE ON TABLE vino, cliente, composicion, vino_maridaje,
+    permiso_exportacion
+    TO app_rw;
+
+-- USAGE de secuencias: PK identity de las tablas que app_rw inserta por sí
+-- (vino, cliente, comprobante, ingreso, transferencia) o por trigger T7
+-- (auditoria_precio). Sin USAGE, el INSERT fallaría con 42501. Sin SELECT:
+-- no se usa currval en el código de la API.
+GRANT USAGE ON SEQUENCE vino_cod_vino_seq, cliente_id_cliente_seq,
+    comprobante_nro_comprobante_seq, ingreso_cod_ingreso_seq,
+    transferencia_nro_solicitud_seq, auditoria_precio_id_auditoria_seq
+    TO app_rw;
+
+-- EXECUTE de las rutinas que la API llama directamente: descuentos y
+-- validaciones de consulta (003) y los dos procedimientos operativos (004).
+-- Las funciones trigger de 005 NO necesitan EXECUTE del rol disparador
+-- (observación empírica del encabezado).
+GRANT EXECUTE ON ROUTINE fn_descuento_cliente(varchar),
+    fn_stock_sala(integer, integer), fn_antiguedad_anios(date),
+    fn_total_comprobante(integer), sp_procesar_ingreso(integer),
+    sp_procesar_transferencia(integer)
+    TO app_rw;
+
+-- -----------------------------------------------------------------------------
+-- 7. reporte_ro: solo lectura, objeto por objeto
+-- -----------------------------------------------------------------------------
+-- SELECT sobre las 29 tablas: los reportes y las consultas del rol leen
+GRANT SELECT ON TABLE localidad, cepa, bodega, transportista, maridaje, finca,
+    sala, empleado, parcela, vino, cliente, lote_uva, composicion,
+    vino_maridaje, socio, distribuidor, exportador, permiso_exportacion,
+    transportista_localidad, analisis_calidad, auditoria_precio, comprobante,
+    renglon_comprobante, ingreso, renglon_ingreso, transferencia,
+    renglon_transferencia, stock_deposito, stock_sala
+    TO reporte_ro;
+
+-- SELECT sobre las 4 vistas de reportes y fichas (GET /reportes/*).
+GRANT SELECT ON TABLE vw_stock_total_vino, vw_ventas_mensuales_sala,
+    vw_documentos_pendientes, vw_ficha_vino
+    TO reporte_ro;
+
+-- -----------------------------------------------------------------------------
+-- 8. Privilegios por defecto para objetos futuros
+--    (por ejemplo, vistas de reportes o índices de la etapa 4). Se aplican a
+--    los objetos creados por el rol que ejecuta esta migración.
+--
+--    NO hay escrituras implícitas: cualquier tabla futura escribible exige
+--    su GRANT explícito en este archivo (o en una migración posterior), con
+--    la matriz de la sección 3 como fundamento.
+--
+--    LÍMITE OBSERVADO (PostgreSQL 16.15): si el resultado de un ALTER
+--    DEFAULT PRIVILEGES es una ACL vacía, PostgreSQL la descarta; por eso el
+--    REVOKE de EXECUTE de rutinas futuras queda solo como declaración de
+--    intención y NO cancela el EXECUTE por defecto de PUBLIC en funciones
+--    nuevas. El control efectivo es el REVOKE por objeto de la sección 4 y,
+--    para rutinas futuras, el par GRANT/REVOKE explícito en cada migración.
+-- -----------------------------------------------------------------------------
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
--- -----------------------------------------------------------------------------
--- 4. Propietario lógico: control total de los objetos existentes
--- -----------------------------------------------------------------------------
-GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA public TO bda_owner;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO bda_owner;
-GRANT ALL PRIVILEGES ON ALL ROUTINES  IN SCHEMA public TO bda_owner;
-
--- -----------------------------------------------------------------------------
--- 5. API: lectura/escritura sin DDL
--- -----------------------------------------------------------------------------
-GRANT SELECT, INSERT, UPDATE, DELETE
-    ON ALL TABLES IN SCHEMA public
-    TO app_rw;
-
-GRANT USAGE, SELECT
-    ON ALL SEQUENCES IN SCHEMA public
-    TO app_rw;
-
-GRANT EXECUTE
-    ON ALL ROUTINES IN SCHEMA public
-    TO app_rw;
-
--- -----------------------------------------------------------------------------
--- 5b. Matriz de privilegios de app_rw (hallazgo R-001)
---     La seccion 5 dio DML de tabla completa a app_rw. Con triggers INVOKER
---     eso permitia saltarse los triggers ante una inyeccion SQL y modificar
---     totales, stocks o auditoria a mano. Ahora T1, T2, T7 y los procedures
---     son SECURITY DEFINER (004/005) y app_rw solo conserva lo minimo. El
---     orden importa: primero REVOKE del DML de tabla completa y despues GRANT
---     por columna.
---     Las columnas calculadas por trigger se omiten del GRANT de INSERT: el
---     trigger las completa en NEW sin chequeo de privilegio de columna. Los
---     DEFAULT y las columnas IDENTITY siguen funcionando con GRANT por columna.
--- -----------------------------------------------------------------------------
-
--- comprobante: la API solo crea la cabecera; los importes los escribe T2.
-REVOKE ALL PRIVILEGES ON TABLE comprobante FROM app_rw;
-GRANT SELECT ON TABLE comprobante TO app_rw;
-GRANT INSERT (fecha, id_cliente, id_sala) ON TABLE comprobante TO app_rw;
-
--- renglon_comprobante: la API solo envia vino y cantidad; T1 completa importes.
-REVOKE ALL PRIVILEGES ON TABLE renglon_comprobante FROM app_rw;
-GRANT SELECT ON TABLE renglon_comprobante TO app_rw;
-GRANT INSERT (nro_comprobante, cod_vino, cantidad)
-    ON TABLE renglon_comprobante TO app_rw;
-
--- stock_sala / stock_deposito: solo lectura. Toda escritura pasa por T2 o por
--- los procedures DEFINER.
-REVOKE ALL PRIVILEGES ON TABLE stock_sala FROM app_rw;
-GRANT SELECT ON TABLE stock_sala TO app_rw;
-REVOKE ALL PRIVILEGES ON TABLE stock_deposito FROM app_rw;
-GRANT SELECT ON TABLE stock_deposito TO app_rw;
-
--- ingreso: alta sin estado (DEFAULT en_confeccion) y avance de estado.
-REVOKE ALL PRIVILEGES ON TABLE ingreso FROM app_rw;
-GRANT SELECT ON TABLE ingreso TO app_rw;
-GRANT INSERT (fecha, id_transportista, cuit_bodega) ON TABLE ingreso TO app_rw;
-GRANT UPDATE (estado) ON TABLE ingreso TO app_rw;
-
--- transferencia: alta sin fecha ni estado (los fuerza/default el esquema) y
--- avance de estado.
-REVOKE ALL PRIVILEGES ON TABLE transferencia FROM app_rw;
-GRANT SELECT ON TABLE transferencia TO app_rw;
-GRANT INSERT (id_sala) ON TABLE transferencia TO app_rw;
-GRANT UPDATE (estado) ON TABLE transferencia TO app_rw;
-
--- renglones de documento: editables mientras el documento esta en_confeccion
--- (T6 lo valida); la API puede corregir cantidades y borrar renglones.
-REVOKE ALL PRIVILEGES ON TABLE renglon_ingreso FROM app_rw;
-GRANT SELECT ON TABLE renglon_ingreso TO app_rw;
-GRANT INSERT (cod_ingreso, cod_vino, cantidad)
-    ON TABLE renglon_ingreso TO app_rw;
-GRANT UPDATE (cantidad) ON TABLE renglon_ingreso TO app_rw;
-GRANT DELETE ON TABLE renglon_ingreso TO app_rw;
-
-REVOKE ALL PRIVILEGES ON TABLE renglon_transferencia FROM app_rw;
-GRANT SELECT ON TABLE renglon_transferencia TO app_rw;
-GRANT INSERT (nro_solicitud, cod_vino, cantidad)
-    ON TABLE renglon_transferencia TO app_rw;
-GRANT UPDATE (cantidad) ON TABLE renglon_transferencia TO app_rw;
-GRANT DELETE ON TABLE renglon_transferencia TO app_rw;
-
--- auditoria_precio: solo lectura; la escribe T7 (DEFINER).
-REVOKE ALL PRIVILEGES ON TABLE auditoria_precio FROM app_rw;
-GRANT SELECT ON TABLE auditoria_precio TO app_rw;
-
--- vino: sin cambios a proposito. El precio lo edita la API (queda auditado por
--- T7) y el DML completo de la seccion 5 sigue vigente.
-
--- -----------------------------------------------------------------------------
--- 6. Reportes: solo lectura
---    Se incluyen vistas y tablas. Las vistas permiten encapsular reportes;
---    las tablas quedan disponibles para consultas de solo lectura puntuales.
--- -----------------------------------------------------------------------------
-GRANT SELECT
-    ON ALL TABLES IN SCHEMA public
-    TO reporte_ro;
-
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
-    ON ALL TABLES IN SCHEMA public
-    FROM reporte_ro;
-
--- -----------------------------------------------------------------------------
--- 7. Privilegios por defecto para objetos que se creen en el futuro
---    (por ejemplo, índices o vistas de la etapa 4). Se aplican a los objetos
---    creados por el rol que ejecuta esta migración.
---    ADVERTENCIA (R-001): este default da a app_rw DML amplio sobre toda tabla
---    nueva, incluidas las sensibles. Toda tabla sensible que se agregue debe
---    restrangerse explicitamente con REVOKE + GRANT por columna, como en 5b.
--- -----------------------------------------------------------------------------
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rw;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO app_rw;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT EXECUTE ON ROUTINES TO app_rw;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT ON TABLES TO reporte_ro;
 
 -- -----------------------------------------------------------------------------
--- 8. Conexión a la base: quitar CONNECT a PUBLIC y darlo solo a los roles
+-- 9. Conexión a la base: quitar CONNECT a PUBLIC y darlo solo a los roles
 -- -----------------------------------------------------------------------------
 DO $$
 BEGIN

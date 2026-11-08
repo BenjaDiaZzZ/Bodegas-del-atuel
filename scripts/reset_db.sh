@@ -25,11 +25,13 @@ echo "Levantando PostgreSQL..."
 docker compose up -d db
 
 echo "Esperando a que terminen los scripts de inicialización..."
+# Sin grep -q a propósito: con pipefail, si grep corta apenas encuentra el match,
+# docker compose logs muere por SIGPIPE y el pipeline queda en falso negativo.
 for _ in $(seq 1 60); do
-  if docker compose logs db 2>&1 | grep -q "PostgreSQL init process complete"; then
+  if docker compose logs db 2>&1 | grep -F "PostgreSQL init process complete" >/dev/null; then
     break
   fi
-  if ! docker compose ps --status running --services | grep -qx "db"; then
+  if ! docker compose ps --status running --services | grep -xF "db" >/dev/null; then
     echo "ERROR: el contenedor de PostgreSQL no está corriendo." >&2
     docker compose logs db >&2
     exit 1
@@ -37,7 +39,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
-if ! docker compose logs db 2>&1 | grep -q "PostgreSQL init process complete"; then
+if ! docker compose logs db 2>&1 | grep -F "PostgreSQL init process complete" >/dev/null; then
   echo "ERROR: timeout esperando la inicialización de PostgreSQL." >&2
   docker compose logs db >&2
   exit 1

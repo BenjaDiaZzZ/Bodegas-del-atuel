@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  db:
+    name: Migraciones PostgreSQL
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar el cliente de PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Preparar el .env de CI
+        run: |
+          cat > .env <<'ENV'
+          POSTGRES_USER=bodegas
+          POSTGRES_PASSWORD=ci_password
+          POSTGRES_DB=bodegas_del_atuel
+          POSTGRES_PORT=5432
+          DB_PASSWORD=ci_app_password
+          REPORTE_RO_PASSWORD=ci_reporte_password
+          ENV
+
+      - name: Recrear la base con el flujo local
+        run: ./scripts/reset_db.sh
+
+      - name: Verificar objetos creados
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: bodegas
+          PGPASSWORD: ci_password
+          PGDATABASE: bodegas_del_atuel
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            tablas int;
+            vistas int;
+            roles int;
+          BEGIN
+            SELECT count(*) INTO tablas
+              FROM pg_tables
+             WHERE schemaname = 'public';
+            SELECT count(*) INTO vistas
+              FROM pg_views
+             WHERE schemaname = 'public';
+            SELECT count(*) INTO roles
+              FROM pg_roles
+             WHERE rolname IN ('bda_owner', 'app_rw', 'reporte_ro');
+
+            IF tablas < 29 OR vistas < 4 OR roles <> 3 THEN
+              RAISE EXCEPTION
+                'Verificación falló: tablas=%, vistas=%, roles=%',
+                tablas, vistas, roles;
+            END IF;
+          END
+          $$;
+          SQL
+
+  contrato:
+    name: Contrato OpenAPI y mock
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validar el contrato OpenAPI
+        run: npx --yes @redocly/cli@2 lint api/openapi.yaml
+
+      - name: Levantar el mock y probar /salud
+        run: |
+          set -euo pipefail
+          npx --yes @stoplight/prism-cli@5 mock api/openapi.yaml --port 4010 > prism.log 2>&1 &
+          prism_pid=$!
+          trap 'kill "${prism_pid}" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4010/salud > salud.json; then
+              cat salud.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "El mock de Prism no respondió en /salud." >&2
+          cat prism.log >&2
+          exit 1
