@@ -109,7 +109,31 @@ como documenta la sección 8 de `007_roles.sql`.
       `test_007_roles.sql` OK, `grep -c "ON ALL"` = 0. `test_006_vistas.sql`
       OK ejecutado desde el contenido de la rama `feature/p3-006-vistas-compat`
       (aún sin mergear en esta rama; se verificó compatibilidad cruzada).
-- [ ] T5 — Commit de trabajo (Conventional Commit) + cierre de este documento.
+- [x] T5 — Commit de trabajo `48aea04` (`fix(db): reemplaza ON ALL TABLES
+      por privilegios explícitos por objeto en 007`) + cierre de este
+      documento. Revisión nativa RDD: **aprobada y quemada**
+      (`gentle-ai.review-acknowledged/v1`, lineage `review-9ee93b924bf32ff8`).
+
+## Revisión nativa (2026-11-08)
+
+- Assess: `risk medium` (cambio ejecutable en `007_roles.sql`), `review_due`
+  por `slice_budget_reached` (1140 líneas). Consentimiento concedido por el
+  usuario; lens único `review-reliability` (plan de uno para tier medio).
+- Resultado: **aprobado**. El revisor verificó la consistencia de la matriz
+  entre migración y test (29/4/13/14 objetos; INSERT 17, UPDATE 11, DELETE 5,
+  USAGE 6, EXECUTE 6), los literales de humo contra los fixtures y los
+  controles de PUBLIC/default ACLs/memberships.
+- Autoridad quemada con el acknowledgement exacto (revision consumida
+  `sha256:f6243e9f…`). El límite revisado avanza a `48aea04`.
+- Hallazgos advisory no bloqueantes (trabajo posterior; no reabren la revisión):
+  1. R3-1 (test:654-657): el literal `2` de `fn_antiguedad_anios('2024-01-01')`
+     depende del reloj — solo es válido durante 2026.
+  2. R3-2 (test:577-589): las comparaciones `<>` de F2 son vacuas ante NULL;
+     usar `IS DISTINCT FROM` como en F3/F4/F6.
+  3. R3-3 (test:237-252): falta un SELECT vivo sobre las vistas como
+     `app_rw`/`reporte_ro`.
+  4. R3-4 (test:417-426): el escaneo de ACLs de la sección D omite `relkind 'm'`.
+  5. R3-5 (test:5-6): fijar `-U` o asertar el rol de conexión de la suite.
 
 ## Criterios de aceptación
 
