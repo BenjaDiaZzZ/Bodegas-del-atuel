@@ -469,7 +469,7 @@ BEGIN
       FROM vw_documentos_pendientes
      WHERE tipo_documento = 'ingreso' AND numero = 9001;
 
-    IF v_ref <> 'Bodega Test 006' OR v_sala IS NOT NULL OR v_estado <> 'en_confeccion' THEN
+    IF v_ref IS DISTINCT FROM 'Bodega Test 006' OR v_sala IS NOT NULL OR v_estado IS DISTINCT FROM 'en_confeccion' THEN
         RAISE EXCEPTION 'Ingreso 9001: referencia=%, id_sala=%, estado=%',
             v_ref, v_sala, v_estado;
     END IF;
@@ -479,7 +479,7 @@ BEGIN
       FROM vw_documentos_pendientes
      WHERE tipo_documento = 'transferencia' AND numero = 9001;
 
-    IF v_ref <> 'Localidad Test 006' OR v_sala <> 9001 OR v_estado <> 'en_confeccion' THEN
+    IF v_ref IS DISTINCT FROM 'Localidad Test 006' OR v_sala IS DISTINCT FROM 9001 OR v_estado IS DISTINCT FROM 'en_confeccion' THEN
         RAISE EXCEPTION 'Transferencia 9001: referencia=%, id_sala=%, estado=%',
             v_ref, v_sala, v_estado;
     END IF;

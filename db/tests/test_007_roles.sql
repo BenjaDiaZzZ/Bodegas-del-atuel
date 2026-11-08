@@ -27,9 +27,10 @@
 --     Siembra catálogos como superusuario y ejecuta el camino de la API como
 --     app_rw con IDs 91xx: venta (comprobante + renglón), procesado de
 --     ingreso y transferencia (CALL sp_procesar_*) y actualización de precio
---     de vino. Comprueba los efectos de los triggers SECURITY INVOKER de 005
---     con literales independientes: recalculo de total y descuento de stock,
---     estados y auditoría de precio.
+--     de vino. Comprueba los efectos de los triggers de 005 —que mezcla ambos
+--     modos: T3–T6, T8 y T9 son SECURITY INVOKER; T1, T2 y T7 son
+--     SECURITY DEFINER— con literales independientes: recalculo de total y
+--     descuento de stock, estados y auditoría de precio.
 --   * Sección G: columnas fuera de la matriz (totales, stocks, fecha de
 --     cabecera, auditoría) fallan con 42501 como app_rw.
 --   * Sección H: UPDATE(estado) y UPDATE(cantidad) de la matriz se permiten.
@@ -412,9 +413,9 @@ BEGIN
            SET cantidad = cantidad
          WHERE nro_comprobante < 0;
         RAISE EXCEPTION 'FAIL: app_rw hizo UPDATE sobre renglon_comprobante sin recibir error';
-    EXCEPTION WHEN insufficient_privilege THEN
-        IF SQLSTATE <> '42501' THEN
-            RAISE EXCEPTION 'FAIL: denegacion con code % en UPDATE renglon_comprobante, esperado 42501', SQLSTATE;
+    EXCEPTION WHEN others THEN
+        IF SQLSTATE IS DISTINCT FROM '42501' THEN
+            RAISE EXCEPTION 'FAIL: UPDATE renglon_comprobante rechazada con % (se esperaba 42501): %', SQLSTATE, SQLERRM;
         END IF;
         RAISE NOTICE 'OK (B): UPDATE renglon_comprobante como app_rw denegado (42501)';
     END;
@@ -423,9 +424,9 @@ BEGIN
         DELETE FROM renglon_comprobante
          WHERE nro_comprobante < 0;
         RAISE EXCEPTION 'FAIL: app_rw hizo DELETE sobre renglon_comprobante sin recibir error';
-    EXCEPTION WHEN insufficient_privilege THEN
-        IF SQLSTATE <> '42501' THEN
-            RAISE EXCEPTION 'FAIL: denegacion con code % en DELETE renglon_comprobante, esperado 42501', SQLSTATE;
+    EXCEPTION WHEN others THEN
+        IF SQLSTATE IS DISTINCT FROM '42501' THEN
+            RAISE EXCEPTION 'FAIL: DELETE renglon_comprobante rechazada con % (se esperaba 42501): %', SQLSTATE, SQLERRM;
         END IF;
         RAISE NOTICE 'OK (B): DELETE renglon_comprobante como app_rw denegado (42501)';
     END;
@@ -514,7 +515,7 @@ BEGIN
           JOIN pg_namespace n ON n.oid = c.relnamespace
          CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
          WHERE n.nspname = 'public'
-           AND c.relkind IN ('r', 'v', 'S', 'f', 'p')
+           AND c.relkind IN ('r', 'v', 'S', 'f', 'p', 'm')
            AND a.grantee = 0
     ) THEN
         RAISE EXCEPTION 'FAIL: hay tablas, vistas o secuencias con privilegios para PUBLIC (grantee 0) en el esquema public';
@@ -660,8 +661,8 @@ BEGIN
     RETURNING nro_comprobante INTO v_nro;
 
     -- renglón: precio 1000, socio 10 % → subtotal 1800.00, descuento 200.00.
-    -- T2 (AFTER INSERT, SECURITY INVOKER como app_rw) recalcula la cabecera
-    -- y descuenta stock: 10 → 8.
+    -- T2 (AFTER INSERT, SECURITY DEFINER: corre con los permisos del dueño,
+    -- no con los de app_rw) recalcula la cabecera y descuenta stock: 10 → 8.
     INSERT INTO renglon_comprobante (nro_comprobante, cod_vino, cantidad)
     VALUES (v_nro, v_vino_a, 2);
 
@@ -774,9 +775,26 @@ BEGIN
             fn_stock_sala(9101, v_vino_b);
     END IF;
 
-    IF fn_antiguedad_anios(DATE '2024-01-01') <> 2 THEN
-        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(2024-01-01) devolvio %, esperado 2',
-            fn_antiguedad_anios(DATE '2024-01-01');
+    -- Los valores esperados son literales derivados de CURRENT_DATE: la suite
+    -- no depende del año calendario.
+    IF fn_antiguedad_anios(CURRENT_DATE) <> 0 THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(CURRENT_DATE) devolvio %, esperado 0',
+            fn_antiguedad_anios(CURRENT_DATE);
+    END IF;
+
+    IF fn_antiguedad_anios((CURRENT_DATE + INTERVAL '5 years')::date) <> 0 THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(futuro +5 anios) devolvio %, esperado 0',
+            fn_antiguedad_anios((CURRENT_DATE + INTERVAL '5 years')::date);
+    END IF;
+
+    IF fn_antiguedad_anios((CURRENT_DATE - INTERVAL '3 years')::date) <> 3 THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(CURRENT_DATE - 3 anios) devolvio %, esperado 3',
+            fn_antiguedad_anios((CURRENT_DATE - INTERVAL '3 years')::date);
+    END IF;
+
+    IF fn_antiguedad_anios(NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'FAIL: fn_antiguedad_anios(NULL) devolvio %, esperado NULL (STRICT)',
+            fn_antiguedad_anios(NULL);
     END IF;
 
     IF (SELECT total FROM fn_total_comprobante(v_nro)) IS DISTINCT FROM 1800.00 THEN
@@ -1053,19 +1071,64 @@ DECLARE
     v_def      text;
     r          text;
 BEGIN
-    -- K1. Snapshot de ACL de tablas, vistas, secuencias y rutinas.
+    -- K1. Snapshot ampliado: ACL de tablas, vistas, secuencias y rutinas,
+    --     ACL por columna (pg_attribute.attacl), privilegios por defecto,
+    --     esquema, base, membresías y atributos de los tres roles.
+    --
+    --     Re-ejecuta: la matriz de REVOKE/GRANT por objeto, incluidos los
+    --     GRANT por columna. Sobre eso aplica la comparación: si re-aplicar
+    --     cambiara cualquier ACL de objeto o de columna, el md5 cambiaría.
+    --
+    --     NO re-ejecuta: CREATE ROLE, REVOKE ALL ON SCHEMA / ON DATABASE ni
+    --     ALTER DEFAULT PRIVILEGES. Eso queda cubierto al re-aplicar el
+    --     archivo 007_roles.sql completo, verificado fuera de esta suite, y el
+    --     comportamiento del ALTER DEFAULT PRIVILEGES de rutinas se asierta
+    --     directamente en la sección L.
+    --
+    --     Componentes de estabilidad, no de idempotencia: pg_default_acl,
+    --     nspacl, datacl, pg_auth_members y los atributos de rol están en el
+    --     hash pero la re-aplicación no los toca, así que siempre coinciden.
+    --     Sirven para detectar un cambio externo durante la corrida, no para
+    --     probar que 007 es idempotente sobre ellos.
     SELECT md5(string_agg(x, ',' ORDER BY x)) INTO v_before
       FROM (
         SELECT c.relname || '=' || COALESCE(c.relacl::text, '-') AS x
           FROM pg_class c
           JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S')
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S', 'm', 'f', 'p')
+        UNION ALL
+        SELECT c.relname || '.' || a.attname || '=' || COALESCE(a.attacl::text, '-')
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND a.attacl IS NOT NULL
         UNION ALL
         SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')=' ||
                COALESCE(p.proacl::text, '-')
           FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
+        UNION ALL
+        SELECT '<default:' || defaclobjtype::text || '>' ||
+               COALESCE(defaclacl::text, '-')
+          FROM pg_default_acl
+        UNION ALL
+        SELECT '<schema:public>' || COALESCE(nspacl::text, '-')
+          FROM pg_namespace
+         WHERE nspname = 'public'
+        UNION ALL
+        SELECT '<db>' || COALESCE(datacl::text, '-')
+          FROM pg_database
+         WHERE datname = current_database()
+        UNION ALL
+        SELECT '<member>' || member::regrole::text || '=>' || roleid::regrole::text
+          FROM pg_auth_members
+        UNION ALL
+        SELECT '<role>' || rolname || ':' || rolinherit::text ||
+               rolcreatedb::text || rolcreaterole::text ||
+               rolcanlogin::text || rolbypassrls::text
+          FROM pg_roles
+         WHERE rolname IN ('bda_owner', 'app_rw', 'reporte_ro')
       ) AS s;
 
     -- Re-aplicar la matriz de 007 (mismas listas que la sección A).
@@ -1124,19 +1187,46 @@ BEGIN
         SELECT c.relname || '=' || COALESCE(c.relacl::text, '-') AS x
           FROM pg_class c
           JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S')
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S', 'm', 'f', 'p')
+        UNION ALL
+        SELECT c.relname || '.' || a.attname || '=' || COALESCE(a.attacl::text, '-')
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND a.attacl IS NOT NULL
         UNION ALL
         SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')=' ||
                COALESCE(p.proacl::text, '-')
           FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
+        UNION ALL
+        SELECT '<default:' || defaclobjtype::text || '>' ||
+               COALESCE(defaclacl::text, '-')
+          FROM pg_default_acl
+        UNION ALL
+        SELECT '<schema:public>' || COALESCE(nspacl::text, '-')
+          FROM pg_namespace
+         WHERE nspname = 'public'
+        UNION ALL
+        SELECT '<db>' || COALESCE(datacl::text, '-')
+          FROM pg_database
+         WHERE datname = current_database()
+        UNION ALL
+        SELECT '<member>' || member::regrole::text || '=>' || roleid::regrole::text
+          FROM pg_auth_members
+        UNION ALL
+        SELECT '<role>' || rolname || ':' || rolinherit::text ||
+               rolcreatedb::text || rolcreaterole::text ||
+               rolcanlogin::text || rolbypassrls::text
+          FROM pg_roles
+         WHERE rolname IN ('bda_owner', 'app_rw', 'reporte_ro')
       ) AS s;
 
     IF v_before IS DISTINCT FROM v_after THEN
         RAISE EXCEPTION 'FAIL: re-aplicar 007 cambió la ACL (% vs %)', v_before, v_after;
     END IF;
-    RAISE NOTICE 'OK (K1): re-aplicar las sentencias de 007 no altera ninguna ACL';
+    RAISE NOTICE 'OK (K1): re-aplicar la matriz por objeto de 007 no altera ninguna ACL de objeto ni de columna';
 
     -- K2. Re-aplicar 006: CREATE OR REPLACE VIEW conserva la ACL de la vista.
     SELECT array_agg(c.relname || '=' || COALESCE(c.relacl::text, '-')
