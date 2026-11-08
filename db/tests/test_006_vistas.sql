@@ -576,6 +576,108 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
+-- A6. vw_ventas_mensuales_sala: el bucket mensual es independiente del
+--     TimeZone de la sesión (R-015) y su contrato de columnas no cambió.
+--     Los comprobantes 9001 (marzo) y 9002 (abril) son el fixture de dos
+--     meses distintos ya sembrado por el camino normal de escritura.
+--     La vista usa date_trunc('month', v.fecha::timestamp)::date; sin el
+--     cast explícito, PostgreSQL resolvería date_trunc con timestamptz según
+--     el huso de la sesión (latente, aunque el truncado al mes es estable).
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+    c_zonas   text[] := ARRAY[
+        'America/Argentina/Buenos_Aires',
+        'Pacific/Kiritimati',
+        'America/Santiago'];
+    v_prev    text := current_setting('TimeZone');
+    v_zona    text;
+    v_ref     text;
+    v_obs     text;
+    v_meses   date[];
+    v_columnas text[];
+    v_esperadas text[] := ARRAY[
+        'id_sala:integer',
+        'id_localidad:integer',
+        'localidad:character varying',
+        'mes:date',
+        'botellas_vendidas:numeric',
+        'monto_total:numeric',
+        'comprobantes:bigint'];
+    v_dia     integer;
+BEGIN
+    -- Contrato de columnas, orden y tipos: la API depende de él.
+    SELECT array_agg(column_name || ':' || data_type
+                     ORDER BY ordinal_position)
+      INTO v_columnas
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'vw_ventas_mensuales_sala';
+
+    IF v_columnas IS DISTINCT FROM v_esperadas THEN
+        RAISE EXCEPTION 'Contrato de vw_ventas_mensuales_sala cambiado: % (esperado %)',
+            v_columnas, v_esperadas;
+    END IF;
+
+    -- Ningún mes puede salir con día distinto del 1.
+    FOR v_dia IN
+        SELECT DISTINCT EXTRACT(DAY FROM mes)::integer
+          FROM vw_ventas_mensuales_sala
+         WHERE id_sala = 9001
+    LOOP
+        IF v_dia <> 1 THEN
+            RAISE EXCEPTION 'vw_ventas_mensuales_sala devolvió un mes con día %', v_dia;
+        END IF;
+    END LOOP;
+
+    -- Referencia: filas (mes, monto, botellas, comprobantes) de la sala 9001.
+    PERFORM set_config('TimeZone', c_zonas[1], true);
+
+    SELECT string_agg(
+               mes::text || '|' || monto_total::text || '|' ||
+               botellas_vendidas::text || '|' || comprobantes::text,
+               ',' ORDER BY mes)
+      INTO v_ref
+      FROM vw_ventas_mensuales_sala
+     WHERE id_sala = 9001;
+
+    SELECT array_agg(mes ORDER BY mes)
+      INTO v_meses
+      FROM vw_ventas_mensuales_sala
+     WHERE id_sala = 9001;
+
+    IF v_ref IS NULL THEN
+        RAISE EXCEPTION 'vw_ventas_mensuales_sala no devolvió filas para la sala 9001';
+    END IF;
+
+    IF v_meses IS DISTINCT FROM ARRAY[DATE '2026-03-01', DATE '2026-04-01'] THEN
+        RAISE EXCEPTION 'Meses esperados {2026-03-01, 2026-04-01} y se obtuvo %', v_meses;
+    END IF;
+
+    -- Repetir la consulta en los otros husos; el resultado debe ser idéntico.
+    FOREACH v_zona IN ARRAY c_zonas LOOP
+        PERFORM set_config('TimeZone', v_zona, true);
+
+        SELECT string_agg(
+                   mes::text || '|' || monto_total::text || '|' ||
+                   botellas_vendidas::text || '|' || comprobantes::text,
+                   ',' ORDER BY mes)
+          INTO v_obs
+          FROM vw_ventas_mensuales_sala
+         WHERE id_sala = 9001;
+
+        IF v_obs IS DISTINCT FROM v_ref THEN
+            RAISE EXCEPTION 'TimeZone % alteró el bucket mensual: % vs %',
+                v_zona, v_obs, v_ref;
+        END IF;
+    END LOOP;
+
+    PERFORM set_config('TimeZone', v_prev, true);
+
+    RAISE NOTICE 'OK A6: vw_ventas_mensuales_sala es estable en tres TimeZone y conserva su contrato';
+END $$;
+
+-- -----------------------------------------------------------------------------
 -- Cierre: la prueba no deja cambios.
 -- -----------------------------------------------------------------------------
 DO $$
