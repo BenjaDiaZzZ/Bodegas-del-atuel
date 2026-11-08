@@ -30,6 +30,16 @@
 --     de vino. Comprueba los efectos de los triggers SECURITY INVOKER de 005
 --     con literales independientes: recalculo de total y descuento de stock,
 --     estados y auditoría de precio.
+--   * Sección G: columnas fuera de la matriz (totales, stocks, fecha de
+--     cabecera, auditoría) fallan con 42501 como app_rw.
+--   * Sección H: UPDATE(estado) y UPDATE(cantidad) de la matriz se permiten.
+--   * Sección I: app_rw no tiene USAGE de secuencia y la PK identity se
+--     genera igual (BY DEFAULT en cliente, ALWAYS en vino).
+--   * Sección J: reporte_ro lee las 4 vistas aun con las tablas base
+--     revocadas (acceso con permisos del owner de la vista) y no lee una
+--     tabla no habilitada.
+--   * Sección K: re-aplicar 007 no altera la ACL y CREATE OR REPLACE VIEW de
+--     006 conserva los GRANT de las vistas.
 --   * No es tautológica: los valores esperados son literales calculados a mano
 --     (socio = 10 %: precio 1000, cantidad 2 → total 1800, stock 10 → 8).
 --
@@ -123,6 +133,25 @@ BEGIN
 END
 $$;
 
+-- Aserción de privilegio por columna (GRANT INSERT/UPDATE (columna)).
+CREATE OR REPLACE FUNCTION pg_temp.t7_col(p_rol text, p_rel text, p_col text,
+                                          p_priv text, p_esperado boolean)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_obs boolean;
+BEGIN
+    SELECT has_column_privilege(p_rol, p_rel, p_col, p_priv) INTO v_obs;
+    IF v_obs IS DISTINCT FROM p_esperado THEN
+        RAISE EXCEPTION 'FAIL: rol % PRIV % en columna %.%: esperado %, observado %',
+            p_rol, p_priv, p_rel, p_col,
+            CASE WHEN p_esperado THEN 'concedido' ELSE 'retenido' END,
+            CASE WHEN v_obs THEN 'concedido' ELSE 'retenido' END;
+    END IF;
+END
+$$;
+
 -- Aserción por dirección: recorre la lista completa de tablas y exige que
 -- exactamente las de p_permitidas tengan el privilegio (las demas, no). Esto
 -- impide tanto la subconcesión como la subretención.
@@ -166,12 +195,11 @@ DECLARE
         'comprobante_nro_comprobante_seq', 'ingreso_cod_ingreso_seq',
         'transferencia_nro_solicitud_seq', 'vino_cod_vino_seq'];
 
-    c_seqs_rw  text[] := ARRAY[  -- Secuencias que usa app_rw para insertar
-        'vino_cod_vino_seq', 'cliente_id_cliente_seq',
-        'comprobante_nro_comprobante_seq', 'ingreso_cod_ingreso_seq',
-        'transferencia_nro_solicitud_seq', 'auditoria_precio_id_auditoria_seq'];
+    -- app_rw no recibe USAGE de ninguna secuencia (R-013): la generación de
+    -- PK identity no lo exige y la API nunca llama nextval/currval/setval.
+    c_seqs_rw  text[] := ARRAY[]::text[];
 
-    c_rtines   text[] := ARRAY[  -- las 14 rutinas de 003, 004 y 005
+    c_rtines   text[] := ARRAY[  -- las 15 rutinas de 003, 004 y 005
         'fn_descuento_cliente(varchar)',
         'fn_stock_sala(integer, integer)',
         'fn_antiguedad_anios(date)',
@@ -185,7 +213,8 @@ DECLARE
         'fn_tg_transferencia_fecha()',
         'fn_tg_renglon_documento_bloqueo()',
         'fn_tg_vino_precio_auditoria()',
-        'fn_tg_composicion_cien()'];
+        'fn_tg_composicion_cien()',
+        'fn_tg_renglon_venta_inmutable()'];
 
     c_rtines_api text[] := ARRAY[  -- rutinas que la API llama a propósito
         'fn_descuento_cliente(varchar)',
@@ -195,23 +224,25 @@ DECLARE
         'sp_procesar_ingreso(integer)',
         'sp_procesar_transferencia(integer)'];
 
-    -- app_rw INSERT: escrituras contratadas de la API + auditoria_precio
-    -- (inserta el trigger T7 de 005 con privilegios de app_rw).
+    -- app_rw INSERT de TABLA COMPLETA: solo las tablas cuyo contrato
+    -- permite escribir cualquier columna. Las tablas críticas reciben
+    -- INSERT por columna y se verifican con t7_col más abajo (R-001/R-005).
     c_app_ins text[] := ARRAY[
         'vino', 'cliente', 'composicion', 'vino_maridaje', 'socio',
-        'distribuidor', 'exportador', 'permiso_exportacion', 'comprobante',
-        'renglon_comprobante', 'ingreso', 'renglon_ingreso', 'transferencia',
-        'renglon_transferencia', 'stock_deposito', 'stock_sala',
-        'auditoria_precio'];
+        'distribuidor', 'exportador', 'permiso_exportacion'];
 
-    -- app_rw UPDATE: operando y triggers/procedimientos que actualizan.
-    -- renglon_ingreso y renglon_transferencia SOLO por el SELECT ... FOR
-    -- UPDATE de sp_procesar_* (PostgreSQL 16 lo exige: probe con 42501 en un
-    -- rol SELECT-only; ver 007_roles.sql). Nunca DELETE.
+    -- app_rw UPDATE de TABLA COMPLETA: solo operandos editables por PUT.
+    -- Los estados de ingreso/transferencia (UPDATE (estado)) y la cantidad
+    -- de los renglones (UPDATE (cantidad), habilitada por T6) son GRANT por
+    -- columna y se verifican con t7_col.
     c_app_upd text[] := ARRAY[
-        'vino', 'cliente', 'comprobante', 'stock_sala', 'stock_deposito',
-        'ingreso', 'transferencia', 'renglon_ingreso',
-        'renglon_transferencia', 'distribuidor', 'exportador'];
+        'vino', 'cliente', 'distribuidor', 'exportador'];
+
+    -- app_rw SELECT en tablas base: todo el esquema (consulta y listados).
+    -- reporte_ro, en cambio, solo lee las 6 tablas de sus reportes (R-011).
+    c_rep_sel text[] := ARRAY[
+        'vino', 'renglon_comprobante', 'stock_sala', 'stock_deposito',
+        'transportista', 'ingreso'];
 
     -- app_rw DELETE: solo bajas directas contratadas (PUT /vinos reemplaza
     -- composición y maridajes; PUT /clientes reemplaza permisos; DELETE
@@ -227,10 +258,11 @@ BEGIN
     -- A. Matriz de privilegios efectiva en ambos sentidos.
     ---------------------------------------------------------------------------
 
-    -- SELECT en todas las tablas para los tres roles.
+    -- SELECT: bda_owner y app_rw en todas las tablas; reporte_ro solo en
+    -- las 6 tablas base que respaldan los reportes (R-011).
     PERFORM pg_temp.t7_dir('bda_owner',  'SELECT', c_todas, c_todas);
     PERFORM pg_temp.t7_dir('app_rw',     'SELECT', c_todas, c_todas);
-    PERFORM pg_temp.t7_dir('reporte_ro', 'SELECT', c_todas, c_todas);
+    PERFORM pg_temp.t7_dir('reporte_ro', 'SELECT', c_rep_sel, c_todas);
 
     -- SELECT en las 4 vistas para app_rw y reporte_ro (los reportes corren
     -- como reporte_ro y las consultas de detalle de la API, como app_rw).
@@ -269,9 +301,77 @@ BEGIN
     RAISE NOTICE 'OK (A): matriz efectiva de tablas y vistas correcta (3 roles × 5 privilegios)';
 
     ---------------------------------------------------------------------------
-    -- A. Secuencias: bda_owner total; app_rw USAGE solo en las 6 de las
-    --    tablas que inserta (vino, cliente, comprobante, ingreso,
-    --    transferencia, auditoria_precio); reporte_ro ninguna.
+    -- A. INSERT por columna en las tablas críticas (R-001/R-005): la tabla
+    --    NO tiene INSERT de tabla completa y solo las columnas de origen lo
+    --    tienen; las columnas derivadas quedan retenidas.
+    ---------------------------------------------------------------------------
+    PERFORM pg_temp.t7_priv('app_rw', 'comprobante', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'fecha', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'id_cliente', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'id_sala', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'total', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'descuento', 'INSERT', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'renglon_comprobante', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_comprobante', 'nro_comprobante', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_comprobante', 'cod_vino', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_comprobante', 'cantidad', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_comprobante', 'precio_unitario', 'INSERT', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'ingreso', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'fecha', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'id_transportista', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'cuit_bodega', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'estado', 'INSERT', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'transferencia', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'transferencia', 'id_sala', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'transferencia', 'fecha_confeccion', 'INSERT', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'renglon_ingreso', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_ingreso', 'cod_ingreso', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_ingreso', 'cod_vino', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_ingreso', 'cantidad', 'INSERT', true);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'renglon_transferencia', 'INSERT', false);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_transferencia', 'nro_solicitud', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_transferencia', 'cod_vino', 'INSERT', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_transferencia', 'cantidad', 'INSERT', true);
+
+    RAISE NOTICE 'OK (A): INSERT por columna correcto en las 6 tablas críticas';
+
+    ---------------------------------------------------------------------------
+    -- A. UPDATE por columna (R-012): estados de cabecera y cantidad de los
+    --    renglones; el resto de las columnas, y los stocks/totales, quedan
+    --    retenidos (los escriben T1/T2/T7 y sp_procesar_*, DEFINER).
+    ---------------------------------------------------------------------------
+    PERFORM pg_temp.t7_priv('app_rw', 'ingreso', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'estado', 'UPDATE', true);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'fecha', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'ingreso', 'cuit_bodega', 'UPDATE', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'transferencia', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'transferencia', 'estado', 'UPDATE', true);
+    PERFORM pg_temp.t7_col('app_rw', 'transferencia', 'fecha_confeccion', 'UPDATE', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'renglon_ingreso', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_ingreso', 'cantidad', 'UPDATE', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_ingreso', 'cod_vino', 'UPDATE', false);
+
+    PERFORM pg_temp.t7_priv('app_rw', 'renglon_transferencia', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_transferencia', 'cantidad', 'UPDATE', true);
+    PERFORM pg_temp.t7_col('app_rw', 'renglon_transferencia', 'nro_solicitud', 'UPDATE', false);
+
+    PERFORM pg_temp.t7_col('app_rw', 'comprobante', 'total', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'stock_sala', 'cantidad', 'UPDATE', false);
+    PERFORM pg_temp.t7_col('app_rw', 'stock_deposito', 'cantidad', 'UPDATE', false);
+
+    RAISE NOTICE 'OK (A): UPDATE por columna correcto (estado/cantidad) y retenido en stocks y totales';
+
+    ---------------------------------------------------------------------------
+    -- A. Secuencias: bda_owner total; app_rw NO tiene USAGE en ninguna
+    --    (R-013: la PK identity se genera sin privilegio de secuencia y la
+    --    API nunca llama nextval); reporte_ro ninguna.
     ---------------------------------------------------------------------------
     FOREACH r IN ARRAY c_seqs LOOP
         PERFORM pg_temp.t7_seq('bda_owner',  r, 'USAGE', true);
@@ -281,7 +381,7 @@ BEGIN
     RAISE NOTICE 'OK (A): matriz de secuencias correcta (13 × 3 roles, USAGE)';
 
     ---------------------------------------------------------------------------
-    -- A. Rutinas: bda_owner EXECUTE en las 14; app_rw solo en las 6 que la
+    -- A. Rutinas: bda_owner EXECUTE en las 15; app_rw solo en las 6 que la
     --    API llama (las funciones trigger se disparan sin EXECUTE del rol
     --    disparador; se verifica funcionalmente en la sección F).
     --    reporte_ro no ejecuta rutinas: consulta tablas y vistas.
@@ -291,7 +391,13 @@ BEGIN
         PERFORM pg_temp.t7_exec('app_rw',     r, r = ANY (c_rtines_api));
         PERFORM pg_temp.t7_exec('reporte_ro', r, false);
     END LOOP;
-    RAISE NOTICE 'OK (A): matriz de rutinas correcta (14 × 3 roles, EXECUTE)';
+    RAISE NOTICE 'OK (A): matriz de rutinas correcta (15 × 3 roles, EXECUTE)';
+
+    -- T9 (PR #14) debe estar cubierta por los REVOKE/GRANT por rutina:
+    -- sin EXECUTE para app_rw ni para PUBLIC, con EXECUTE para bda_owner.
+    PERFORM pg_temp.t7_exec('app_rw',    'fn_tg_renglon_venta_inmutable()', false);
+    PERFORM pg_temp.t7_exec('bda_owner', 'fn_tg_renglon_venta_inmutable()', true);
+    RAISE NOTICE 'OK (A): T9 fn_tg_renglon_venta_inmutable sin EXECUTE para app_rw y con EXECUTE para bda_owner';
 
     ---------------------------------------------------------------------------
     -- B. REQUISITO de P1: como app_rw, UPDATE y DELETE sobre
@@ -329,10 +435,12 @@ BEGIN
     PERFORM pg_temp.t7_priv('app_rw', 'renglon_comprobante', 'DELETE', false);
     RAISE NOTICE 'OK (B): 007 no concede UPDATE ni DELETE de renglon_comprobante a app_rw';
 
-    -- El FOR UPDATE de T1 (trigger de venta) sobre stock_sala exige UPDATE:
-    -- verificarlo garantiza que la venta no se rompe por subconcesion.
-    PERFORM pg_temp.t7_priv('app_rw', 'stock_sala', 'UPDATE', true);
-    RAISE NOTICE 'OK (B): app_rw conserva UPDATE en stock_sala para el FOR UPDATE de T1';
+    -- T1 (BEFORE INSERT de renglon_comprobante) hace FOR UPDATE sobre
+    -- stock_sala, pero es SECURITY DEFINER: corre con los permisos del
+    -- owner. app_rw no necesita UPDATE sobre stock_sala; la venta se
+    -- verifica funcionalmente en la sección F.
+    PERFORM pg_temp.t7_priv('app_rw', 'stock_sala', 'UPDATE', false);
+    RAISE NOTICE 'OK (B): app_rw no tiene UPDATE en stock_sala (T1 es SECURITY DEFINER)';
 
     ---------------------------------------------------------------------------
     -- C. reporte_ro: solo lectura. Muestras de INSERT/UPDATE/DELETE sobre
@@ -510,16 +618,24 @@ BEGIN
     PERFORM set_config('role', 'app_rw', true);
 
     -- F1. Alta de cliente socio y vino con composición (100 % con una cepa)
-    --     por el camino normal de la API. La API calcula el descuento con
-    --     fn_descuento_cliente(tipo) y lo envia (RN-06).
+    --     por el camino normal de la API. descuento es GENERATED ALWAYS AS
+    --     (fn_descuento_cliente(tipo)) STORED: NO se inserta y la base lo
+    --     calcula (RN-06).
     INSERT INTO cliente (nombre, tipo, tipo_documento, nro_documento,
-                         direccion, id_localidad, descuento)
+                         direccion, id_localidad)
     VALUES ('Cliente Test 007', 'socio', 'DNI', '91000001',
-            'Calle Cliente 007', 9101, fn_descuento_cliente('socio'))
+            'Calle Cliente 007', 9101)
     RETURNING id_cliente INTO v_cliente;
 
     IF v_cliente IS NULL THEN
         RAISE EXCEPTION 'FAIL: cliente no devolvio id (secuencia de cliente no usable por app_rw)';
+    END IF;
+
+    IF (SELECT descuento FROM cliente WHERE id_cliente = v_cliente)
+           IS DISTINCT FROM fn_descuento_cliente('socio') THEN
+        RAISE EXCEPTION 'FAIL: descuento generado del cliente es %, esperado fn_descuento_cliente(socio) = %',
+            (SELECT descuento FROM cliente WHERE id_cliente = v_cliente),
+            fn_descuento_cliente('socio');
     END IF;
 
     INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml,
@@ -531,9 +647,13 @@ BEGIN
     INSERT INTO composicion (cod_vino, id_cepa, porcentaje)
     VALUES (v_vino_a, 9101, 100.00);
 
-    -- F2. Venta como app_rw: stock inicial de la sala para el vino A.
+    -- F2. Venta como app_rw. El stock inicial de la sala lo siembra el rol de
+    --     carga (superusuario): app_rw ya no tiene INSERT sobre stock_sala,
+    --     porque sus escrituras las hacen T1/T2 y sp_procesar_* (DEFINER).
+    PERFORM set_config('role', 'none', true);
     INSERT INTO stock_sala (id_sala, cod_vino, cantidad)
     VALUES (9101, v_vino_a, v_stock_sala_a);
+    PERFORM set_config('role', 'app_rw', true);
 
     INSERT INTO comprobante (id_cliente, id_sala)
     VALUES (v_cliente, 9101)
@@ -560,8 +680,9 @@ BEGIN
     RAISE NOTICE 'OK (F): venta como app_rw recalcula total 1800.00 y descuenta stock 10 → 8';
 
     -- F3. Ingreso: alta, renglón, terminar y procesar como app_rw.
-    --     sp_procesar_ingreso es SECURITY INVOKER: hace FOR UPDATE sobre la
-    --     cabecera y upsert sobre stock_deposito con permisos de app_rw.
+    --     sp_procesar_ingreso es SECURITY DEFINER: hace FOR UPDATE sobre la
+    --     cabecera y upsert sobre stock_deposito con permisos del owner, por
+    --     eso app_rw no necesita UPDATE en stock_deposito.
     INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml,
                       graduacion, precio_venta, cuit_bodega)
     VALUES ('Vino Test 007 B', 'tinto', 2022, 750, 12.00, 100.00,
@@ -595,9 +716,9 @@ BEGIN
     END IF;
     RAISE NOTICE 'OK (F): CALL sp_procesar_ingreso como app_rw suma stock_deposito 5 y pasa a procesado';
 
-    -- F4. Transferencia: verifica el UPDATE concedido SOLO por el
-    --     SELECT ... FOR UPDATE de sp_procesar_transferencia sobre los
-    --     renglones (PostgreSQL 16 lo exige; ver 007_roles.sql).
+    -- F4. Transferencia: el FOR UPDATE de renglones y de stock lo hace
+    --     sp_procesar_transferencia como SECURITY DEFINER (owner); app_rw no
+    --     necesita UPDATE de tabla completa sobre renglon_transferencia.
     INSERT INTO transferencia (id_sala)
     VALUES (9101)
     RETURNING nro_solicitud INTO v_transf;
@@ -625,7 +746,8 @@ BEGIN
     RAISE NOTICE 'OK (F): CALL sp_procesar_transferencia como app_rw descuenta deposito 5 → 2 y suma sala → 3';
 
     -- F5. Cambio de precio del vino B: el trigger T7 (AFTER UPDATE de vino,
-    --     SECURITY INVOKER como app_rw) inserta auditoria_precio.
+    --     SECURITY DEFINER) inserta auditoria_precio con permisos del owner;
+    --     app_rw solo conserva SELECT sobre esa tabla.
     IF (SELECT COUNT(*) FROM auditoria_precio
          WHERE cod_vino = v_vino_b) <> 0 THEN
         RAISE EXCEPTION 'FAIL: auditoria_precio tenia filas antes del cambio de precio del vino B';
@@ -664,6 +786,387 @@ BEGIN
     RAISE NOTICE 'OK (F): EXECUTE de las 4 rutinas de consulta del contrato como app_rw';
 
     RESET ROLE;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- G. Denegaciones por columna como app_rw (R-001/R-005/R-012).
+--    Toda columna fuera de la matriz debe fallar con 42501 aunque la tabla
+--    tenga otros privilegios; el chequeo ocurre al iniciar el plan, así que
+--    un WHERE que no alcanza filas no lo evita.
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+    PERFORM set_config('role', 'app_rw', true);
+
+    BEGIN
+        UPDATE comprobante SET total = 0 WHERE nro_comprobante < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE comprobante.total';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE comprobante.total como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        UPDATE ingreso SET fecha = fecha WHERE cod_ingreso < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE ingreso.fecha';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE ingreso.fecha como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        UPDATE transferencia SET fecha_confeccion = fecha_confeccion
+         WHERE nro_solicitud < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE transferencia.fecha_confeccion';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE transferencia.fecha_confeccion como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        UPDATE stock_sala SET cantidad = cantidad WHERE id_sala < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE stock_sala.cantidad';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE stock_sala.cantidad como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        UPDATE stock_deposito SET cantidad = cantidad WHERE cod_vino < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE stock_deposito.cantidad';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE stock_deposito.cantidad como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        UPDATE renglon_ingreso SET cod_vino = cod_vino WHERE cod_ingreso < 0;
+        RAISE EXCEPTION 'FAIL: app_rw pudo UPDATE renglon_ingreso.cod_vino';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): UPDATE renglon_ingreso.cod_vino como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        INSERT INTO comprobante (fecha, id_cliente, id_sala, total)
+        VALUES (CURRENT_DATE, 9101, 9101, 0);
+        RAISE EXCEPTION 'FAIL: app_rw pudo INSERT comprobante.total';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): INSERT comprobante.total como app_rw denegado (42501)';
+    END;
+
+    BEGIN
+        INSERT INTO auditoria_precio
+            (cod_vino, precio_anterior, precio_nuevo, fecha_hora, usuario)
+        VALUES (0, 0, 0, now(), 'test_007');
+        RAISE EXCEPTION 'FAIL: app_rw pudo INSERT auditoria_precio';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (G): INSERT auditoria_precio como app_rw denegado (42501)';
+    END;
+
+    PERFORM set_config('role', 'none', true);
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- H. Columnas permitidas: los UPDATE por columna de la matriz deben pasar el
+--    chequeo de privilegio (pueden afectar 0 filas, eso no importa).
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+    PERFORM set_config('role', 'app_rw', true);
+
+    UPDATE ingreso SET estado = estado WHERE cod_ingreso < 0;
+    UPDATE transferencia SET estado = estado WHERE nro_solicitud < 0;
+    UPDATE renglon_ingreso SET cantidad = cantidad WHERE cod_ingreso < 0;
+    UPDATE renglon_transferencia SET cantidad = cantidad WHERE nro_solicitud < 0;
+
+    PERFORM set_config('role', 'none', true);
+    RAISE NOTICE 'OK (H): UPDATE(estado)/UPDATE(cantidad) permitidos a app_rw';
+EXCEPTION WHEN insufficient_privilege THEN
+    RAISE EXCEPTION 'FAIL: app_rw no pudo ejercer un UPDATE por columna permitido: %', SQLERRM;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- I. Secuencias (R-013): app_rw no tiene USAGE en ninguna de las 13 y aun
+--    así puede insertar con PK identity BY DEFAULT (cliente) y ALWAYS (vino).
+--    cepa también es BY DEFAULT, pero app_rw no puede insertarla (es un
+--    catálogo de carga); la prueba usa una tabla que sí está en su matriz.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+    c_seqs text[] := ARRAY[
+        'localidad_id_localidad_seq', 'cepa_id_cepa_seq',
+        'transportista_id_transportista_seq', 'maridaje_id_maridaje_seq',
+        'finca_id_finca_seq', 'sala_id_sala_seq', 'cliente_id_cliente_seq',
+        'analisis_calidad_id_analisis_seq', 'auditoria_precio_id_auditoria_seq',
+        'comprobante_nro_comprobante_seq', 'ingreso_cod_ingreso_seq',
+        'transferencia_nro_solicitud_seq', 'vino_cod_vino_seq'];
+    r            text;
+    v_cliente    integer;
+    v_vino       integer;
+BEGIN
+    FOREACH r IN ARRAY c_seqs LOOP
+        IF has_sequence_privilege('app_rw', r, 'USAGE') THEN
+            RAISE EXCEPTION 'FAIL: app_rw conserva USAGE sobre la secuencia %', r;
+        END IF;
+    END LOOP;
+
+    PERFORM set_config('role', 'app_rw', true);
+
+    -- cliente.id_cliente es GENERATED BY DEFAULT AS IDENTITY.
+    INSERT INTO cliente (nombre, tipo, tipo_documento, nro_documento,
+                         direccion, id_localidad)
+    VALUES ('Cliente Test 007 Seq', 'socio', 'DNI', '91000002',
+            'Calle Cliente Seq 007', 9101)
+    RETURNING id_cliente INTO v_cliente;
+
+    -- vino.cod_vino es GENERATED ALWAYS AS IDENTITY.
+    INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml,
+                      graduacion, precio_venta, cuit_bodega)
+    VALUES ('Vino Test 007 Seq', 'tinto', 2023, 750, 13.00, 100.00,
+            '20000000091')
+    RETURNING cod_vino INTO v_vino;
+
+    INSERT INTO composicion (cod_vino, id_cepa, porcentaje)
+    VALUES (v_vino, 9101, 100.00);
+
+    PERFORM set_config('role', 'none', true);
+
+    IF v_cliente IS NULL OR v_vino IS NULL THEN
+        RAISE EXCEPTION 'FAIL: la PK identity no se generó sin USAGE de secuencia (cliente=%, vino=%)',
+            v_cliente, v_vino;
+    END IF;
+
+    RAISE NOTICE 'OK (I): app_rw sin USAGE de secuencia e INSERT identity BY DEFAULT/ALWAYS correcto';
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- J. reporte_ro (R-011): las 4 vistas se leen solo con el GRANT de vista
+--    aunque se revoque SELECT sobre TODAS las tablas del esquema (el acceso
+--    a las tablas base se valida con el owner de la vista). Una tabla no
+--    habilitada, en cambio, debe fallar con 42501. Todo en un SAVEPOINT que
+--    se revierte para no alterar el resto de la prueba.
+-- -----------------------------------------------------------------------------
+SAVEPOINT rep_ro_views;
+
+-- Se revoca SELECT sobre las 29 tablas BASE (las vistas conservan su GRANT).
+REVOKE SELECT ON TABLE localidad, cepa, bodega, transportista, maridaje,
+    finca, sala, empleado, parcela, vino, cliente, lote_uva, composicion,
+    vino_maridaje, socio, distribuidor, exportador, permiso_exportacion,
+    transportista_localidad, analisis_calidad, auditoria_precio, comprobante,
+    renglon_comprobante, ingreso, renglon_ingreso, transferencia,
+    renglon_transferencia, stock_deposito, stock_sala
+    FROM reporte_ro;
+
+DO $$
+DECLARE
+    v_n bigint;
+BEGIN
+    PERFORM set_config('role', 'reporte_ro', true);
+
+    SELECT count(*) INTO v_n FROM vw_stock_total_vino;
+    SELECT count(*) INTO v_n FROM vw_ventas_mensuales_sala;
+    SELECT count(*) INTO v_n FROM vw_documentos_pendientes;
+    SELECT count(*) INTO v_n FROM vw_ficha_vino;
+
+    BEGIN
+        SELECT count(*) INTO v_n FROM cliente;
+        RAISE EXCEPTION 'FAIL: reporte_ro pudo SELECT sobre cliente';
+    EXCEPTION WHEN insufficient_privilege THEN
+        RAISE NOTICE 'OK (J): SELECT cliente como reporte_ro denegado (42501)';
+    END;
+
+    PERFORM set_config('role', 'none', true);
+    RAISE NOTICE 'OK (J): reporte_ro lee las 4 vistas con las tablas base revocadas';
+END $$;
+
+ROLLBACK TO SAVEPOINT rep_ro_views;
+RELEASE SAVEPOINT rep_ro_views;
+
+DO $$
+BEGIN
+    IF NOT has_table_privilege('reporte_ro', 'vw_ficha_vino', 'SELECT')
+       OR NOT has_table_privilege('reporte_ro', 'vw_ventas_mensuales_sala', 'SELECT') THEN
+        RAISE EXCEPTION 'FAIL: el rollback del REVOKE no restauró SELECT de reporte_ro sobre las vistas';
+    END IF;
+    RAISE NOTICE 'OK (J): el GRANT de vista de reporte_ro quedó restaurado';
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- K. Idempotencia y persistencia de ACL.
+--    K1: re-aplicar las sentencias de 007 (mismas listas de la matriz) no
+--        produce error y deja exactamente la misma ACL.
+--    K2: re-aplicar 006 (CREATE OR REPLACE VIEW) preserva la ACL de las
+--        vistas, incluidos los GRANT de app_rw y reporte_ro.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+    c_todas    text[] := ARRAY[
+        'localidad', 'cepa', 'bodega', 'transportista', 'maridaje', 'finca',
+        'sala', 'empleado', 'parcela', 'vino', 'cliente', 'lote_uva',
+        'composicion', 'vino_maridaje', 'socio', 'distribuidor', 'exportador',
+        'permiso_exportacion', 'transportista_localidad', 'analisis_calidad',
+        'auditoria_precio', 'comprobante', 'renglon_comprobante', 'ingreso',
+        'renglon_ingreso', 'transferencia', 'renglon_transferencia',
+        'stock_deposito', 'stock_sala'];
+    c_vistas   text[] := ARRAY[
+        'vw_stock_total_vino', 'vw_ventas_mensuales_sala',
+        'vw_documentos_pendientes', 'vw_ficha_vino'];
+    c_seqs     text[] := ARRAY[
+        'localidad_id_localidad_seq', 'cepa_id_cepa_seq',
+        'transportista_id_transportista_seq', 'maridaje_id_maridaje_seq',
+        'finca_id_finca_seq', 'sala_id_sala_seq', 'cliente_id_cliente_seq',
+        'analisis_calidad_id_analisis_seq', 'auditoria_precio_id_auditoria_seq',
+        'comprobante_nro_comprobante_seq', 'ingreso_cod_ingreso_seq',
+        'transferencia_nro_solicitud_seq', 'vino_cod_vino_seq'];
+    c_rtines   text[] := ARRAY[
+        'fn_descuento_cliente(varchar)',
+        'fn_stock_sala(integer, integer)',
+        'fn_antiguedad_anios(date)',
+        'fn_total_comprobante(integer)',
+        'sp_procesar_ingreso(integer)',
+        'sp_procesar_transferencia(integer)',
+        'fn_tg_renglon_venta_completar()',
+        'fn_tg_renglon_venta_actualizar()',
+        'fn_tg_ingreso_estado()',
+        'fn_tg_transferencia_estado()',
+        'fn_tg_transferencia_fecha()',
+        'fn_tg_renglon_documento_bloqueo()',
+        'fn_tg_vino_precio_auditoria()',
+        'fn_tg_composicion_cien()',
+        'fn_tg_renglon_venta_inmutable()'];
+    c_rtines_api text[] := ARRAY[
+        'fn_descuento_cliente(varchar)',
+        'fn_stock_sala(integer, integer)',
+        'fn_antiguedad_anios(date)',
+        'fn_total_comprobante(integer)',
+        'sp_procesar_ingreso(integer)',
+        'sp_procesar_transferencia(integer)'];
+    c_app_ins  text[] := ARRAY[
+        'vino', 'cliente', 'composicion', 'vino_maridaje', 'socio',
+        'distribuidor', 'exportador', 'permiso_exportacion'];
+    c_app_upd  text[] := ARRAY['vino', 'cliente', 'distribuidor', 'exportador'];
+    c_app_del  text[] := ARRAY[
+        'vino', 'cliente', 'composicion', 'vino_maridaje',
+        'permiso_exportacion'];
+    c_rep_sel  text[] := ARRAY[
+        'vino', 'renglon_comprobante', 'stock_sala', 'stock_deposito',
+        'transportista', 'ingreso'];
+    v_before   text;
+    v_after    text;
+    v_acl_v    text;
+    v_acl_v2   text;
+    v_def      text;
+    r          text;
+BEGIN
+    -- K1. Snapshot de ACL de tablas, vistas, secuencias y rutinas.
+    SELECT md5(string_agg(x, ',' ORDER BY x)) INTO v_before
+      FROM (
+        SELECT c.relname || '=' || COALESCE(c.relacl::text, '-') AS x
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S')
+        UNION ALL
+        SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')=' ||
+               COALESCE(p.proacl::text, '-')
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public'
+      ) AS s;
+
+    -- Re-aplicar la matriz de 007 (mismas listas que la sección A).
+    FOREACH r IN ARRAY c_todas LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE %I FROM PUBLIC', r);
+        EXECUTE format('GRANT SELECT ON TABLE %I TO app_rw', r);
+        IF r = ANY (c_app_ins) THEN
+            EXECUTE format('GRANT INSERT ON TABLE %I TO app_rw', r);
+        END IF;
+        IF r = ANY (c_app_upd) THEN
+            EXECUTE format('GRANT UPDATE ON TABLE %I TO app_rw', r);
+        END IF;
+        IF r = ANY (c_app_del) THEN
+            EXECUTE format('GRANT DELETE ON TABLE %I TO app_rw', r);
+        END IF;
+        IF r = ANY (c_rep_sel) THEN
+            EXECUTE format('GRANT SELECT ON TABLE %I TO reporte_ro', r);
+        ELSE
+            EXECUTE format('REVOKE SELECT ON TABLE %I FROM reporte_ro', r);
+        END IF;
+    END LOOP;
+
+    EXECUTE 'GRANT INSERT (fecha, id_cliente, id_sala) ON TABLE comprobante TO app_rw';
+    EXECUTE 'GRANT INSERT (nro_comprobante, cod_vino, cantidad) ON TABLE renglon_comprobante TO app_rw';
+    EXECUTE 'GRANT INSERT (fecha, id_transportista, cuit_bodega) ON TABLE ingreso TO app_rw';
+    EXECUTE 'GRANT INSERT (id_sala) ON TABLE transferencia TO app_rw';
+    EXECUTE 'GRANT INSERT (cod_ingreso, cod_vino, cantidad) ON TABLE renglon_ingreso TO app_rw';
+    EXECUTE 'GRANT INSERT (nro_solicitud, cod_vino, cantidad) ON TABLE renglon_transferencia TO app_rw';
+    EXECUTE 'GRANT UPDATE (estado) ON TABLE ingreso TO app_rw';
+    EXECUTE 'GRANT UPDATE (estado) ON TABLE transferencia TO app_rw';
+    EXECUTE 'GRANT UPDATE (cantidad) ON TABLE renglon_ingreso, renglon_transferencia TO app_rw';
+
+    FOREACH r IN ARRAY c_vistas LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE %I FROM PUBLIC', r);
+        EXECUTE format('GRANT SELECT ON TABLE %I TO app_rw', r);
+        EXECUTE format('GRANT SELECT ON TABLE %I TO reporte_ro', r);
+    END LOOP;
+
+    FOREACH r IN ARRAY c_seqs LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES ON SEQUENCE %I FROM PUBLIC', r);
+        EXECUTE format('REVOKE USAGE ON SEQUENCE %I FROM app_rw', r);
+        EXECUTE format('GRANT ALL PRIVILEGES ON SEQUENCE %I TO bda_owner', r);
+    END LOOP;
+
+    FOREACH r IN ARRAY c_rtines LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES ON ROUTINE %s FROM PUBLIC', r);
+        EXECUTE format('GRANT ALL PRIVILEGES ON ROUTINE %s TO bda_owner', r);
+    END LOOP;
+
+    FOREACH r IN ARRAY c_rtines_api LOOP
+        EXECUTE format('GRANT EXECUTE ON ROUTINE %s TO app_rw', r);
+    END LOOP;
+
+    SELECT md5(string_agg(x, ',' ORDER BY x)) INTO v_after
+      FROM (
+        SELECT c.relname || '=' || COALESCE(c.relacl::text, '-') AS x
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v', 'S')
+        UNION ALL
+        SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')=' ||
+               COALESCE(p.proacl::text, '-')
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public'
+      ) AS s;
+
+    IF v_before IS DISTINCT FROM v_after THEN
+        RAISE EXCEPTION 'FAIL: re-aplicar 007 cambió la ACL (% vs %)', v_before, v_after;
+    END IF;
+    RAISE NOTICE 'OK (K1): re-aplicar las sentencias de 007 no altera ninguna ACL';
+
+    -- K2. Re-aplicar 006: CREATE OR REPLACE VIEW conserva la ACL de la vista.
+    SELECT array_agg(c.relname || '=' || COALESCE(c.relacl::text, '-')
+                     ORDER BY c.relname)
+      INTO v_acl_v
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = ANY (c_vistas);
+
+    FOREACH r IN ARRAY c_vistas LOOP
+        v_def := pg_get_viewdef(r::regclass);
+        EXECUTE format('CREATE OR REPLACE VIEW %I AS %s', r, v_def);
+    END LOOP;
+
+    SELECT array_agg(c.relname || '=' || COALESCE(c.relacl::text, '-')
+                     ORDER BY c.relname)
+      INTO v_acl_v2
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = ANY (c_vistas);
+
+    IF v_acl_v IS DISTINCT FROM v_acl_v2 THEN
+        RAISE EXCEPTION 'FAIL: CREATE OR REPLACE VIEW perdió ACL (% vs %)', v_acl_v, v_acl_v2;
+    END IF;
+
+    IF NOT has_table_privilege('app_rw', 'vw_ficha_vino', 'SELECT')
+       OR NOT has_table_privilege('reporte_ro', 'vw_ventas_mensuales_sala', 'SELECT') THEN
+        RAISE EXCEPTION 'FAIL: re-aplicar 006 perdió los GRANT de las vistas';
+    END IF;
+    RAISE NOTICE 'OK (K2): re-aplicar 006 (CREATE OR REPLACE VIEW) preserva las ACL de las 4 vistas';
 END $$;
 
 ROLLBACK;
