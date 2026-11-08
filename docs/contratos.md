@@ -13,7 +13,7 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
 *   **Dinero:** Siempre se usa `NUMERIC(12,2)`.
 *   **Porcentajes:** Siempre se usa `NUMERIC(5,2)` (ej. composición de cepas, `cliente.descuento`).
 *   **⚠️ ATENCIÓN con los descuentos:** 
-    *   `cliente.descuento` = Porcentaje (0 a 100).
+    *   `cliente.descuento` = Porcentaje (0 a 100). Es una columna generada (`GENERATED ALWAYS AS (fn_descuento_cliente(tipo)) STORED`, R-002): la base la deriva de `tipo`. La API nunca la envía ni la modifica; un `INSERT` o `UPDATE` que la incluya falla con `SQLSTATE 428C9`.
     *   `comprobante.descuento` y `renglon_comprobante.descuento` = **Monto de dinero descontado** (ej. $150.00), no porcentaje.
 
 ## 3. Interacción con la API (Reglas de Negocio)
@@ -22,12 +22,43 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
 *   **Transacciones Diferidas:** El constraint trigger de la RN-05 (porcentajes suman 100) falla recién al ejecutar el `COMMIT`. La API debe capturar las excepciones en la confirmación de la transacción, no solo en la ejecución del `INSERT`/`UPDATE`.
 *   **Roles:** La API se conectará utilizando el rol `app_rw`. Para consultas de los reportes se puede usar `reporte_ro`. (Definidos en las variables de entorno).
 
+### Modelo de privilegios de `app_rw` (hallazgo R-001)
+
+La corrección de R-001 (en `db/migrations/004_procedimientos.sql`,
+`db/migrations/005_triggers.sql` y `db/migrations/007_roles.sql`) mueve la
+integridad a rutinas `SECURITY DEFINER` y reduce lo que la API puede escribir
+directamente con `app_rw`:
+
+*   `app_rw` **no puede** hacer `UPDATE` sobre totales (`comprobante.subtotal`,
+    `descuento`, `total`), `stock_sala` ni `stock_deposito`, y **no puede**
+    `DELETE` `comprobante` ni `renglon_comprobante`. Esos cambios ocurren solo
+    dentro de T1, T2, T7 y los procedures.
+*   Los `INSERT` deben indicar la lista de columnas permitida: `comprobante`
+    (`fecha`, `id_cliente`, `id_sala`), `renglon_comprobante` (`nro_comprobante`,
+    `cod_vino`, `cantidad`), `ingreso` (`fecha`, `id_transportista`,
+    `cuit_bodega`) y `transferencia` (`id_sala`). Las columnas calculadas por
+    trigger y los `DEFAULT`/`IDENTITY` quedan fuera del `GRANT`.
+*   El avance de estado se limita a `UPDATE ... SET estado = ...` en `ingreso` y
+    `transferencia`; los movimientos de stock se hacen únicamente con
+    `CALL sp_procesar_ingreso(...)` y `CALL sp_procesar_transferencia(...)`.
+*   Los renglones de documento admiten `UPDATE (cantidad)` y `DELETE` mientras
+    el documento esté `en_confeccion`.
+*   La auditoría la escribe T7: `usuario` sale de `app.usuario` o, si no está
+    seteado, de `session_user`.
+
+La matriz completa, el `SET search_path` de cada rutina DEFINER y las razones
+están en `db/migrations/005_triggers.sql` (T1, T2, T7),
+`db/migrations/004_procedimientos.sql` (procedures) y
+`db/migrations/007_roles.sql` (matriz de `app_rw`), y se verifican en
+`db/tests/security_r001.sql`.
+
 ### Tabla de Traducción de Errores en la API
 | SQLSTATE | HTTP | Significado |
 | :--- | :--- | :--- |
 | `23505` | 409 | UNIQUE violado (Registro duplicado). |
 | `23503` | 409 / 422 | FK violada (Dato inexistente o en uso). |
 | `23514` / `23502` | 422 | CHECK o NOT NULL violado. |
+| `428C9` | 422 | Escritura sobre una columna generada (`cliente.descuento`, R-002). |
 | `P0001` | 409 | Regla de negocio rechazada (RAISE EXCEPTION). |
 | `P0002` | 404 | Documento inexistente (`sp_procesar_ingreso` / `sp_procesar_transferencia`). |
 | `22P02` | 400 | Formato de texto inválido (ej. letra en un ID numérico).|
@@ -49,6 +80,7 @@ Este documento define las reglas de juego entre la Base de Datos, la API y el Fr
     ```
 
 ### Ingresos y Transferencias
+*   **Cabeceras y claves inmutables (R-003/R-005/R-006):** al salir de `en_confeccion`, no se modifican `ingreso.fecha`, `ingreso.id_transportista`, `ingreso.cuit_bodega` ni `transferencia.id_sala`. Las claves de `renglon_ingreso` y `renglon_transferencia` tampoco se actualizan: para mover o cambiar el vino, se borra y reinserta el renglón mientras el documento siga en confección.
 *   **Fecha de Transferencia:** La API NO envía la fecha. Un trigger fuerza la inserción de la fecha actual y bloquea las modificaciones (RN-11).
 *   **Cambio de Estado:** La API avanza el documento a terminado con un `UPDATE`:
     ```sql

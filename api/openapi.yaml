@@ -240,8 +240,8 @@ paths:
       summary: Alta de un cliente
       description: |
         El descuento NO se envía desde la API: la base lo asigna según el tipo
-        (socio 10 %, distribuidor 20 %, exportador 30 %) mediante la función
-        `fn_descuento_cliente` y sus constraints/triggers.
+        (socio 10 %, distribuidor 20 %, exportador 30 %) y lo materializa en una
+        columna generada a partir de `fn_descuento_cliente` (R-002).
       operationId: crearCliente
       requestBody:
         required: true
@@ -1153,7 +1153,7 @@ components:
           type: number
           format: float
           readOnly: true
-          description: Porcentaje asignado por la base según el tipo de cliente (RN-06).
+          description: Porcentaje generado por la base a partir de tipo (R-002); ignorado en escrituras.
           example: 10.0
 
     ClienteDetalle:

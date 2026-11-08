@@ -49,6 +49,31 @@
 --     LOGIN y `scripts/set_role_passwords.sh` les asigna la contraseña desde
 --     DB_PASSWORD y REPORTE_RO_PASSWORD. Nunca se commitea .env.
 --
+-- HALLAZGO R-001 · matriz de privilegios de app_rw (seccion 5b):
+--   La API ya no recibe DML de tabla completa sobre las tablas criticas; solo
+--   puede insertar las columnas que le corresponden y disparar las rutinas
+--   DEFINER (T1, T2, T7 y los procedures de 004), que escriben totales, stocks
+--   y auditoria con los permisos del owner. Matriz exacta:
+--     comprobante            SELECT; INSERT (fecha, id_cliente, id_sala)
+--     renglon_comprobante    SELECT; INSERT (nro_comprobante, cod_vino, cantidad)
+--     stock_sala             SELECT
+--     stock_deposito         SELECT
+--     ingreso                SELECT; INSERT (fecha, id_transportista, cuit_bodega);
+--                            UPDATE (estado)
+--     transferencia          SELECT; INSERT (id_sala); UPDATE (estado)
+--     renglon_ingreso        SELECT; INSERT (cod_ingreso, cod_vino, cantidad);
+--                            UPDATE (cantidad); DELETE
+--     renglon_transferencia  SELECT; INSERT (nro_solicitud, cod_vino, cantidad);
+--                            UPDATE (cantidad); DELETE
+--     auditoria_precio       SELECT
+--     vino                   sin cambios (DML completo de la seccion 5)
+--   Ninguna tabla critica conserva UPDATE ni DELETE de tabla completa.
+--
+--   ADVERTENCIA: `ALTER DEFAULT PRIVILEGES` (seccion 7) sigue otorgando DML
+--   amplio sobre las tablas que se creen en el futuro. Toda tabla sensible
+--   nueva debe restrangerse explicitamente con un REVOKE + GRANT por columna
+--   como los de la seccion 5b; el default no la protege.
+--
 -- En el Docker Compose local, el usuario `POSTGRES_USER` (por defecto
 -- `bodegas`) es el propietario real del clúster/base. `bda_owner` queda como
 -- rol lógico de propietario para la nube; si se desea transferir la propiedad

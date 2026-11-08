@@ -48,6 +48,14 @@
 --  6. Los renglones se agrupan por cod_vino (GROUP BY). La PK ya impide
 --     repetidos; es una defensa extra, sin costo.
 --
+--  7. HALLAZGO R-001 · ambos procedimientos son LANGUAGE plpgsql SECURITY
+--     DEFINER con SET search_path = pg_catalog, public. Escriben
+--     stock_deposito, stock_sala y el estado de los documentos, y 007 ya no le
+--     da a app_rw DML directo sobre esas tablas: la API solo puede mover stock
+--     y avanzar estados llamando a los procedimientos, con los privilegios del
+--     owner. El search_path fijo evita search_path hijacking. El resto de las
+--     rutinas del esquema sigue INVOKER.
+--
 -- CONTRATO DE ERRORES (la API los traduce según docs/contratos.md)
 --     P0001  Regla de negocio rechazada. Mensaje '[RN-10] …' o '[RN-11] …'.   → 409
 --     P0002  El documento no existe.                                          → 404
@@ -72,6 +80,8 @@ BEGIN;
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE sp_procesar_ingreso(p_cod integer)
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_estado estado_documento;
@@ -120,7 +130,7 @@ END;
 $$;
 
 COMMENT ON PROCEDURE sp_procesar_ingreso(integer) IS
-    'RN-10. Procesa un ingreso TERMINADO: suma sus botellas al stock del deposito central y lo pasa a PROCESADO. Parametro: p_cod (cod_ingreso). Errores: P0001 [RN-10] si no esta terminado o no tiene renglones; P0002 si no existe. Todo o nada: no hace COMMIT ni ROLLBACK, el llamador es dueño de la transaccion.';
+    'RN-10. Procesa un ingreso TERMINADO: suma sus botellas al stock del deposito central y lo pasa a PROCESADO. Parametro: p_cod (cod_ingreso). Errores: P0001 [RN-10] si no esta terminado o no tiene renglones; P0002 si no existe. Todo o nada: no hace COMMIT ni ROLLBACK, el llamador es dueño de la transaccion. SECURITY DEFINER con search_path fijo (pg_catalog, public).';
 
 -- -----------------------------------------------------------------------------
 -- sp_procesar_transferencia(p_nro)
@@ -130,6 +140,8 @@ COMMENT ON PROCEDURE sp_procesar_ingreso(integer) IS
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE sp_procesar_transferencia(p_nro integer)
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_estado estado_documento;
@@ -226,6 +238,6 @@ END;
 $$;
 
 COMMENT ON PROCEDURE sp_procesar_transferencia(integer) IS
-    'RN-11. Procesa una transferencia TERMINADA: bloquea los renglones, valida y bloquea el stock del deposito, descuenta EXACTAMENTE el conjunto validado, lo suma a la sala solicitante y la pasa a PROCESADA. Parametro: p_nro (nro_solicitud). Errores: P0001 [RN-11] si no esta terminada, no tiene renglones, falta la fila del deposito o el stock no alcanza; P0002 si no existe. Todo o nada: no hace COMMIT ni ROLLBACK, el llamador es dueño de la transaccion. Orden de locks: documento, renglones ASC, deposito ASC, sala ASC.';
+    'RN-11. Procesa una transferencia TERMINADA: bloquea los renglones, valida y bloquea el stock del deposito, descuenta EXACTAMENTE el conjunto validado, lo suma a la sala solicitante y la pasa a PROCESADA. Parametro: p_nro (nro_solicitud). Errores: P0001 [RN-11] si no esta terminada, no tiene renglones, falta la fila del deposito o el stock no alcanza; P0002 si no existe. Todo o nada: no hace COMMIT ni ROLLBACK, el llamador es dueño de la transaccion. Orden de locks: documento, renglones ASC, deposito ASC, sala ASC. SECURITY DEFINER con search_path fijo (pg_catalog, public).';
 
 COMMIT;

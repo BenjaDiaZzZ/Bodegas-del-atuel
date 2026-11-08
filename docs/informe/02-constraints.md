@@ -26,8 +26,9 @@ Los dos CHECK cruzados son `ck_permiso_fechas`
 
 Hay dos columnas homónimas con semántica distinta:
 
-- `cliente.descuento` es un **porcentaje**: `ck_cliente_descuento` lo limita a
-  `0..100`.
+- `cliente.descuento` es un **porcentaje derivado de `tipo`** mediante una
+  columna generada (`GENERATED ALWAYS AS (fn_descuento_cliente(tipo)) STORED`,
+  R-002); `ck_cliente_descuento` lo limita a `0..100` como guarda defensiva.
 - `comprobante.descuento` y `renglon_comprobante.descuento` son **importes**
   (`NUMERIC(12,2)`): sus CHECK exigen `>= 0`. En particular,
   `ck_renglon_comprobante_descuento` ya no usa `BETWEEN 0 AND 100`, porque un
@@ -54,6 +55,35 @@ Ningún CHECK usa `CURRENT_DATE` ni funciones no determinísticas. Los `DEFAULT`
 con `CURRENT_DATE` o `now()` son válidos porque no son restricciones y no se
 reevalúan al restaurar un backup. Las reglas que dependen de la fecha actual
 quedan para los triggers de `005_triggers.sql`.
+
+## R-001 · la integridad no depende del privilegio del llamador
+
+El hallazgo R-001 mostró que, con triggers `SECURITY INVOKER`, `app_rw`
+necesitaba `UPDATE`/`DELETE` sobre tablas sensibles y podía saltarse los
+triggers para modificar totales o stocks a mano. La corrección va en los
+archivos de definición (`db/migrations/004_procedimientos.sql`,
+`db/migrations/005_triggers.sql` y `db/migrations/007_roles.sql`): T1, T2, T7 y
+los procedures `sp_procesar_ingreso` / `sp_procesar_transferencia` pasan a
+`SECURITY DEFINER` con `SET search_path = pg_catalog, public`, y `app_rw` queda
+reducido a la matriz mínima: sin `UPDATE` de tabla completa y sin `DELETE`
+sobre `comprobante` ni `renglon_comprobante`. Así la API solo inserta las
+columnas permitidas y la base completa totales, descuenta stocks y audita con
+permisos elevados. La auditoría de precio (T7) registra `app.usuario` o, si no
+está seteado, `session_user` (no `current_user`, que dentro de DEFINER es el
+owner): la integridad ya no depende del privilegio del llamador.
+
+## R-003/R-005/R-006 · inmutabilidad de cabecera y claves de renglon
+
+Los triggers T3 y T4 de `db/migrations/005_triggers.sql` mantienen las
+transiciones válidas de estado y congelan la cabecera al salir de
+`en_confeccion`: en `ingreso`, `fecha`, `id_transportista` y `cuit_bodega`; en
+`transferencia`, `id_sala` (la fecha ya queda protegida por T5). T6 rechaza
+cambios de las claves primaria y foránea de `renglon_ingreso` y
+`renglon_transferencia` en cualquier estado. Para cambiar un renglón se lo debe
+borrar y reinsertar mientras el documento está en confección. Los rechazos usan
+SQLSTATE `P0001` y mensajes `[RN-10]`, `[RN-11]` o `[RN-12]`. La sección 17 de
+`db/tests/db_tests.sql` verifica cambios permitidos y rechazados, transiciones
+combinadas, integridad del dato y borrado en cascada.
 
 ## Verificación
 
