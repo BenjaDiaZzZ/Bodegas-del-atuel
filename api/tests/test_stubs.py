@@ -82,21 +82,6 @@ VINO_SIN_STOCK_KEYS = {
 }
 TRANSPORTISTA_KEYS = {"id_transportista", "razon_social", "ingresos_trasladados"}
 
-VINO_CREATE_BODY = {
-    "nombre_comercial": "Malbec Reserva",
-    "tipo": "tinto",
-    "anada": 2021,
-    "presentacion_ml": 750,
-    "graduacion": 14.0,
-    "precio_venta": 12500.0,
-    "cuit_bodega": "30712345678",
-    "composicion": [
-        {"id_cepa": 1, "porcentaje": 85.0},
-        {"id_cepa": 2, "porcentaje": 15.0},
-    ],
-    "maridajes": [1],
-}
-
 CLIENTE_CREATE_BODY = {
     "nombre": "Juan Pérez",
     "tipo": "socio",
@@ -122,9 +107,6 @@ REGLON_CREATE_BODY = {"cod_vino": 1, "cantidad": 120}
 # expected_keys=None means no response body (204).
 ROUTES = [
     ("GET", "/salud", None, 200, SALUD_KEYS),
-    ("POST", "/vinos", VINO_CREATE_BODY, 201, VINO_DETALLE_KEYS),
-    ("PUT", "/vinos/1", VINO_CREATE_BODY, 200, VINO_DETALLE_KEYS),
-    ("DELETE", "/vinos/1", None, 204, None),
     ("GET", "/clientes", None, 200, PAGE_KEYS | CLIENTE_RESUMEN_KEYS),
     ("POST", "/clientes", CLIENTE_CREATE_BODY, 201, CLIENTE_DETALLE_KEYS),
     ("GET", "/clientes/1", None, 200, CLIENTE_DETALLE_KEYS),

@@ -93,9 +93,16 @@ def listar_vinos(
 
 
 @router.post("/vinos", operation_id="crearVino", response_model=VinoDetalle, status_code=201)
-def crear_vino(body: VinoCreate) -> VinoDetalle:
-    # TODO(6.6): crear el vino con composición y maridajes en una transacción.
-    return detalle_vino_example(1)
+def crear_vino(request: Request, body: VinoCreate) -> VinoDetalle:
+    """Create one wine with composition and pairings in one transaction.
+
+    The database enforces the rules inside ``repo.crear_vino``: RN-05
+    (composition must sum to 100) fails at COMMIT as 409, duplicate business
+    key as 409 (23505) and CHECK/NOT NULL/FK as 422 — all rendered by the
+    centralized handlers, so the router maps nothing itself.
+    """
+    ficha = repo_vinos.crear_vino(request.app.state.pool, **body.model_dump())
+    return VinoDetalle.model_validate(ficha)
 
 
 @router.get("/vinos/{cod}", operation_id="obtenerVino", response_model=VinoDetalle)
@@ -115,12 +122,43 @@ def obtener_vino(cod: int, request: Request) -> VinoDetalle:
     operation_id="actualizarVino",
     response_model=VinoDetalle,
 )
-def actualizar_vino(cod: int, body: VinoUpdate) -> VinoDetalle:
-    # TODO(6.6): actualizar el vino en transacción; registrar app.usuario para RN-13.
-    return detalle_vino_example(cod)
+def actualizar_vino(cod: int, request: Request, body: VinoUpdate) -> VinoDetalle:
+    """Update only the fields the client actually sent (partial update).
+
+    The repo replaces composition/pairings as whole collections when sent.
+    ``409``/``422`` flow through the centralized handlers; only the
+    missing-wine case is raised here.
+    """
+    cambios = body.model_dump(exclude_unset=True)
+    composicion = cambios.pop("composicion", None)
+    maridajes = cambios.pop("maridajes", None)
+    ficha = repo_vinos.actualizar_vino(
+        request.app.state.pool,
+        cod,
+        # Contract gap: the OpenAPI spec provides no audit-identity source
+        # (no header or field was defined). docs/contratos.md documents the
+        # ``app.usuario`` fallback semantics, so an empty string activates
+        # that fallback inside the repo's transaction; the real identity
+        # source is an open team decision, not something to invent here.
+        usuario="",
+        composicion=composicion,
+        maridajes=maridajes,
+        **cambios,
+    )
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {"codigo": "NOT_FOUND", "mensaje": f"No existe el vino {cod}.", "detalle": None, "regla": None},
+        )
+    return VinoDetalle.model_validate(ficha)
 
 
 @router.delete("/vinos/{cod}", operation_id="eliminarVino", status_code=204)
-def eliminar_vino(cod: int) -> None:
-    # TODO(6.6): eliminar el vino y traducir a 409 si hay movimientos (RN-14).
+def eliminar_vino(cod: int, request: Request) -> None:
+    """Delete one wine; FK RESTRICT references surface as 409 centrally (RN-14)."""
+    if repo_vinos.eliminar_vino(request.app.state.pool, cod) == 0:
+        raise DatabaseHttpError(
+            404,
+            {"codigo": "NOT_FOUND", "mensaje": f"No existe el vino {cod}.", "detalle": None, "regla": None},
+        )
     return None
