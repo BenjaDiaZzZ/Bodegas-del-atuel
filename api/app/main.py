@@ -4,12 +4,13 @@ import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from psycopg import Error as PsycopgError
 from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .db import create_pool
-from .errors import DatabaseHttpError, ErrorBody, map_db_error
+from .errors import DatabaseHttpError, ErrorBody, STATUS_BAD_REQUEST, map_db_error
 from .routers.clientes import router as clientes_router
 from .routers.comprobantes import router as comprobantes_router
 from .routers.ingresos import router as ingresos_router
@@ -31,6 +32,33 @@ def _handle_mapped_db_error(request: Request, exc: PsycopgError | DatabaseHttpEr
     if isinstance(exc, DatabaseHttpError):
         return _error_response(ErrorBody(status=exc.status, **exc.payload))
     return _error_response(map_db_error(exc))
+
+
+VALIDATION_ERROR_CODE = "VALIDATION_ERROR"
+VALIDATION_MESSAGE = "La solicitud es inválida."
+_VALIDATION_DETAIL_LIMIT = 5
+
+
+def _validation_detalle(exc: RequestValidationError) -> str:
+    partes = [f"{'.'.join(str(ubicacion) for ubicacion in error['loc'])}: {error['msg']}" for error in exc.errors()]
+    excedentes = partes[_VALIDATION_DETAIL_LIMIT:]
+    return "; ".join(partes[:_VALIDATION_DETAIL_LIMIT]) + ("…" if excedentes else "")
+
+
+def _handle_request_validation_error(request: Request, exc: RequestValidationError) -> Response:
+    """Render framework validation failures as the contract 400 Error body.
+
+    Location and Pydantic's generic message only: user input, ``ctx`` and
+    stack details are never echoed.
+    """
+    return _error_response(
+        ErrorBody(
+            status=STATUS_BAD_REQUEST,
+            codigo=VALIDATION_ERROR_CODE,
+            mensaje=VALIDATION_MESSAGE,
+            detalle=_validation_detalle(exc),
+        )
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -58,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(vinos_router)
     app.add_exception_handler(PsycopgError, _handle_mapped_db_error)
     app.add_exception_handler(DatabaseHttpError, _handle_mapped_db_error)
+    app.add_exception_handler(RequestValidationError, _handle_request_validation_error)
     return app
 
 

@@ -282,3 +282,20 @@ def test_obtener_vino_inexistente_devuelve_404_error_contrato(client):
     assert "999999999" in body["mensaje"]
     assert "detail" not in response.text
     assert "detail" not in body
+
+
+def test_invalid_query_param_returns_400_with_error_body(client):
+    """The contract documents 400 BadRequest for GET /vinos with cuit
+    violating the pattern; the handler builds the Error body and never
+    echoes the offending input.
+    """
+
+    response = client.get("/vinos", params={"cuit_bodega": "not-a-cuit"})
+
+    assert response.status_code == 400
+    body = response.json()
+    assert set(body) == {"codigo", "mensaje", "detalle", "regla"}
+    assert body["codigo"] == "VALIDATION_ERROR"
+    assert "detail" not in body
+    assert "query.cuit_bodega" in body["detalle"]
+    assert "not-a-cuit" not in response.text
