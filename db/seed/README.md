@@ -12,7 +12,15 @@ scripts/seed.sh --scale small --fecha-base 2026-01-01
 
 # O directamente:
 python3 db/seed/seed.py --scale small --fecha-base 2026-01-01
+
+# Verificar reproducibilidad en dos PostgreSQL efímeros (Docker requerido):
+scripts/verify_reproducibility.sh --scale small --fecha-base 2026-01-01
 ```
+
+El verificador repite el seed, compara cantidad de filas y hashes canónicos en
+todas las tablas base públicas (29 en el esquema actual), y exige que los
+controles de integridad 2–6 devuelvan cero.
+Usa contenedores temporales independientes del entorno de desarrollo.
 
 | Opción | Valores | Descripción |
 |---|---|---|
@@ -131,9 +139,9 @@ insertan los datos con COPY y al finalizar se recalculan los totales de
 ## Requisitos
 
 - Python 3.10+
-- `psycopg[binary] >= 3.1`
-- `faker >= 20`
+- Versiones exactas de `psycopg[binary]` y `faker` fijadas en
+  `db/seed/requirements.txt` para alinear entornos.
 
 ```bash
-pip install "psycopg[binary]>=3.1" "faker>=20"
+python3 -m pip install -r db/seed/requirements.txt
 ```
