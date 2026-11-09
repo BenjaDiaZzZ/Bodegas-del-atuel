@@ -69,6 +69,31 @@ jobs:
           $$;
           SQL
 
+  tests:
+    name: Tests de reglas
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar el cliente de PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Preparar el .env de CI
+        run: |
+          cat > .env <<'ENV'
+          POSTGRES_USER=bodegas
+          POSTGRES_PASSWORD=ci_password
+          POSTGRES_DB=bodegas_del_atuel
+          POSTGRES_PORT=5432
+          DB_PASSWORD=ci_app_password
+          REPORTE_RO_PASSWORD=ci_reporte_password
+          ENV
+
+      - name: Ejecutar los tests de reglas
+        run: ./scripts/run_db_tests.sh --reset
+
   contrato:
     name: Contrato OpenAPI y mock
     runs-on: ubuntu-latest
