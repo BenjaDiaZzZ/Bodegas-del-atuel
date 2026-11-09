@@ -51,13 +51,13 @@ Lista de issues para cargar en GitHub Projects. Crear **un issue por fila**, con
 
 ## Fase 4 · Índices y rendimiento (H4)
 
-- [ ] **4.1** Mediciones «antes» — P2
-- [ ] **4.2** Diseño de índices `008_indices.sql` — P2
-- [ ] **4.3** Mediciones «después» y tabla comparativa — P2
-- [ ] **4.4** Orden de columnas e índice descartado — P2
-- [ ] **4.5** Costo de escritura — P2
-- [ ] **4.6** Caso en que el planificador no usa un índice — P2
-- [ ] **4.7** Revisión cruzada — P1
+- [x] **4.1** Mediciones «antes» — P2
+- [x] **4.2** Diseño de índices `008_indices.sql` — P2
+- [x] **4.3** Mediciones «después» y tabla comparativa — P2
+- [x] **4.4** Orden de columnas e índice descartado — P2
+- [x] **4.5** Costo de escritura — P2
+- [x] **4.6** Caso en que el planificador no usa un índice — P2
+- [x] **4.7** Revisión cruzada — P1
 
 ## Fase 5 · Consultas SQL (H5)
 
