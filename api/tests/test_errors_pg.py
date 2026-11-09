@@ -14,7 +14,7 @@ from psycopg.conninfo import make_conninfo
 
 from app.config import Settings
 from app.db import create_pool, get_connection, transaction
-from app.errors import DatabaseHttpError
+from app.errors import DatabaseHttpError, map_db_error
 
 # Per-run markers: unique keys so a shared test database never loses
 # unrelated data at teardown and crashed runs cannot collide on UNIQUE.
@@ -162,3 +162,15 @@ def test_p0002_missing_ingreso_maps_to_404(pool):
     error = raised.value
     assert error.status == 404
     assert error.payload["codigo"] == "P0002"
+
+
+def test_invalid_datetime_format_maps_to_400(pool):
+    """SQLSTATE 22007 (invalid_datetime_format) reaches the mapper as 400."""
+    with get_connection(pool) as connection:
+        with pytest.raises(psycopg.Error) as raised:
+            connection.execute("SELECT %s::date", ("no-es-fecha",))
+
+    assert raised.value.sqlstate == "22007"
+    mapping = map_db_error(raised.value)
+    assert mapping.status == 400
+    assert mapping.codigo == "22007"

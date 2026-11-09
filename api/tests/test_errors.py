@@ -136,6 +136,15 @@ def test_invalid_text_representation_maps_to_400():
     assert mapping.codigo == "22P02"
 
 
+def test_invalid_datetime_format_maps_to_400():
+    error = forged(psycopg_errors.InvalidDatetimeFormat, 'invalid input syntax for type date: "no-es-fecha"')
+
+    mapping = map_db_error(error)
+
+    assert mapping.status == 400
+    assert mapping.codigo == "22007"
+
+
 def test_serialization_failure_maps_to_503_with_retry_hint():
     error = forged(psycopg_errors.SerializationFailure, "could not serialize access due to concurrent update")
 
