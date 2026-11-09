@@ -48,7 +48,7 @@ graph TD
 ## 3.2 · Determinismo y CLI
 
 - `random.seed(42)` y `Faker.seed(42)` al inicio de cada corrida.
-- `--scale small` produce ~28 tablas con datos mínimos (50 comprobantes, 151 renglones).
+- `--scale small` produce datos mínimos (50 comprobantes, 151 renglones) en el esquema de 29 tablas.
 - `--scale full` produce 20.000 comprobantes y ~350.000 renglones.
 - `--fecha-base YYYY-MM-DD` define la fecha de referencia para datos históricos.
 - Todas las fechas se calculan relativas a `fecha_base`, nunca como valores absolutos.
@@ -122,7 +122,7 @@ python3 db/seed/seed.py --benchmark
 
 `db/seed/controles.sql` verifica:
 
-1. Conteo por tabla (28 tablas).
+1. Conteo por tabla (29 tablas).
 2. 0 filas huérfanas (FK no resueltas).
 3. 0 stocks negativos.
 4. 0 comprobantes con `total ≠ SUM(subtotal)` de sus renglones.
@@ -141,3 +141,56 @@ completo se genera con `pg_dump` después de la carga:
 ```bash
 pg_dump --data-only --no-owner bodegas_del_atuel > seed_dump.sql
 ```
+
+## 3.8 · Prueba de reproducibilidad
+
+El script crea dos PostgreSQL efímeros independientes, aplica las migraciones
+001–007, carga el seed, aplica 008 y ejecuta los controles. Compara para cada
+una de las tablas públicas base la cantidad de filas y el MD5 de sus filas
+serializadas y ordenadas canónicamente; además exige cero errores en los
+controles 2–6. La migración 001 declara 29 tablas; el primer bloque informa el
+conteo de todas ellas, incluida `auditoria_precio` (vacía en este seed), que
+también se hashea.
+
+```bash
+scripts/verify_reproducibility.sh --scale small --fecha-base 2026-01-01
+scripts/verify_reproducibility.sh --scale small --fecha-base 2026-01-01 --fecha-base-b 2026-02-01
+```
+
+### Resultados observados
+
+| Caso | Resultado observado |
+|---|---|
+| Fechas iguales, 2026-01-01 | Exit 0; 29/29 tablas PASS; 6 bloques sin errores. |
+| A 2026-01-01 vs. B 2026-02-01 | Exit 1; 7 tablas FAIL: `analisis_calidad`, `cliente`, `comprobante`, `empleado`, `ingreso`, `permiso_exportacion`, `transferencia`. |
+
+### Resultado positivo por tabla
+
+| Tabla | Filas | Resultado | Tabla | Filas | Resultado |
+|---|---:|---|---|---:|---|
+| analisis_calidad | 10 | PASS | auditoria_precio | 0 | PASS |
+| bodega | 5 | PASS | cepa | 12 | PASS |
+| cliente | 15 | PASS | composicion | 67 | PASS |
+| comprobante | 50 | PASS | distribuidor | 4 | PASS |
+| empleado | 10 | PASS | exportador | 4 | PASS |
+| finca | 3 | PASS | ingreso | 20 | PASS |
+| localidad | 18 | PASS | lote_uva | 10 | PASS |
+| maridaje | 8 | PASS | parcela | 7 | PASS |
+| permiso_exportacion | 14 | PASS | renglon_comprobante | 151 | PASS |
+| renglon_ingreso | 53 | PASS | renglon_transferencia | 39 | PASS |
+| sala | 4 | PASS | socio | 7 | PASS |
+| stock_deposito | 26 | PASS | stock_sala | 40 | PASS |
+| transferencia | 15 | PASS | transportista | 5 | PASS |
+| transportista_localidad | 15 | PASS | vino | 26 | PASS |
+| vino_maridaje | 49 | PASS |  |  |  |
+
+Los seis bloques del control positivo devolvieron, en orden: bloque 1
+(conteos): 29 filas, incluida `auditoria_precio` con 0; bloque 2 (huérfanas): 0 en sus 7
+controles; bloque 3 (stock negativo): 0 en sus 2 controles; bloque 4 (totales
+de comprobante): 0; bloque 5 (composición): 0; bloque 6 (estados inválidos):
+0 en sus 2 controles.
+
+El resultado positivo debe mostrar PASS para las 29 tablas y los seis bloques
+de controles sin errores. Las versiones de Faker y psycopg están pinneadas en
+`db/seed/requirements.txt`; usar ese archivo permite alinear las dependencias
+entre entornos.

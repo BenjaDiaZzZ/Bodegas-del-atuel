@@ -77,6 +77,15 @@ COMMENT ON VIEW vw_stock_total_vino IS
 --    de la cabecera al hacer el JOIN. Después agrupa por sala y mes.
 --    `monto_total` sale de comprobante.total (importe ya calculado por la
 --    base, con descuento incluido); `botellas_vendidas` sale de los renglones.
+--    El cast explícito `v.fecha::timestamp` fija la resolución de
+--    date_trunc('month', …): sin él, PostgreSQL convierte el DATE a
+--    timestamptz con el TimeZone de la sesión (pg_typeof devuelve
+--    `timestamp with time zone`). El valor del bucket es el mismo en todos
+--    los husos porque se trunca al mes, pero el cast elimina esa dependencia
+--    latente; se verificó que el resultado es idéntico en
+--    America/Argentina/Buenos_Aires, Pacific/Kiritimati y America/Santiago
+--    (incluido el cambio de horario a medianoche), y la prueba A6 de
+--    db/tests/test_006_vistas.sql lo vuelve a comprobar.
 -- =============================================================================
 CREATE OR REPLACE VIEW vw_ventas_mensuales_sala AS
 WITH ventas_por_comprobante AS (
@@ -100,7 +109,7 @@ SELECT
     v.id_sala,
     s.id_localidad,
     l.nombre                              AS localidad,
-    date_trunc('month', v.fecha)::date    AS mes,
+    date_trunc('month', v.fecha::timestamp)::date AS mes,
     SUM(v.botellas)                       AS botellas_vendidas,
     SUM(v.total)                          AS monto_total,
     COUNT(*)                              AS comprobantes
@@ -113,7 +122,7 @@ GROUP BY
     v.id_sala,
     s.id_localidad,
     l.nombre,
-    date_trunc('month', v.fecha)::date;
+    date_trunc('month', v.fecha::timestamp)::date;
 
 COMMENT ON VIEW vw_ventas_mensuales_sala IS
     'Ventas por sala y mes: botellas de los renglones y total de los comprobantes.';

@@ -295,19 +295,27 @@ def run_seed(conn, scale_name: str, fecha_base: date, benchmark: bool = False) -
             else:
                 alta = fecha_base - timedelta(days=random.randint(1, 365 * 8))
             cli_rows.append((i, fake.name(), tipo, td, nd,
-                             fake.address().replace("\n", ", "), loc_id, alta, 0))
+                             fake.address().replace("\n", ", "), loc_id, alta))
             ids["cliente"][str(i)] = i
         copy_rows(cur, "cliente",
                   ["id_cliente", "nombre", "tipo", "tipo_documento", "nro_documento",
-                   "direccion", "id_localidad", "fecha_alta", "descuento"], cli_rows)
+                   "direccion", "id_localidad", "fecha_alta"], cli_rows)
         cliente_ids = list(range(1, cfg["clientes"] + 1))
 
         # -- 12. Lote uva ------------------------------------------------
         print("  [12/27] lote_uva")
         lote_rows = []
+        used_lote_keys = set()
         for i in range(1, cfg["lotes"] + 1):
-            finca_id, nro_par = random.choice(parcela_keys)
-            campania = random.randint(2018, 2025)
+            for _attempt in range(50):
+                finca_id, nro_par = random.choice(parcela_keys)
+                campania = random.randint(2018, 2025)
+                lk = (finca_id, nro_par, campania)
+                if lk not in used_lote_keys:
+                    used_lote_keys.add(lk)
+                    break
+            else:
+                continue  # skip if no unique combo found
             fecha = date(campania, random.randint(1, 12), random.randint(1, 28))
             kilos = round(random.uniform(100, 50000), 2)
             cuit = random.choice(bodega_cuits)
@@ -345,14 +353,18 @@ def run_seed(conn, scale_name: str, fecha_base: date, benchmark: bool = False) -
         # -- 15. Subtipos de cliente -------------------------------------
         print("  [15/27] socio/distribuidor/exportador")
         socios, dists, exps = [], [], []
+        used_hab = set()
         for i in range(1, cfg["clientes"] + 1):
-            # Recuperar tipo original
             cur.execute("SELECT tipo FROM cliente WHERE id_cliente = %s", (i,))
             t = cur.fetchone()[0]
             if t == "socio":
                 socios.append((i,))
             elif t == "distribuidor":
-                dists.append((i, fake.city(), f"HAB-{random.randint(1000,9999)}"))
+                hab = f"HAB-{i:04d}"
+                while hab in used_hab:
+                    hab = f"HAB-{random.randint(1000, 9999)}"
+                used_hab.add(hab)
+                dists.append((i, fake.city(), hab))
             else:
                 exps.append((i, random.choice(["Chile", "Brasil", "Uruguay", "EE.UU.", "España"])))
         copy_rows(cur, "socio", ["id_cliente"], socios)
@@ -517,6 +529,40 @@ def run_seed(conn, scale_name: str, fecha_base: date, benchmark: bool = False) -
         print("  [27/27] recalcular totales y reactivar triggers")
         recalc_totales(cur)
         enable_triggers(cur, trigger_tables)
+
+        # COPY inserts explicit IDs, so synchronize each identity sequence.
+        cur.execute("""
+            DO $$
+            DECLARE
+                item record;
+                max_id bigint;
+                sequence_name text;
+            BEGIN
+                FOR item IN
+                    SELECT * FROM (VALUES
+                        ('analisis_calidad', 'id_analisis'),
+                        ('auditoria_precio', 'id_auditoria'),
+                        ('cepa', 'id_cepa'),
+                        ('cliente', 'id_cliente'),
+                        ('comprobante', 'nro_comprobante'),
+                        ('finca', 'id_finca'),
+                        ('ingreso', 'cod_ingreso'),
+                        ('localidad', 'id_localidad'),
+                        ('maridaje', 'id_maridaje'),
+                        ('sala', 'id_sala'),
+                        ('transferencia', 'nro_solicitud'),
+                        ('transportista', 'id_transportista'),
+                        ('vino', 'cod_vino')
+                    ) AS identities(table_name, column_name)
+                LOOP
+                    EXECUTE format('SELECT MAX(%I) FROM %I', item.column_name, item.table_name)
+                       INTO max_id;
+                    sequence_name := pg_get_serial_sequence(
+                        format('%I.%I', 'public', item.table_name), item.column_name);
+                    PERFORM setval(sequence_name, COALESCE(max_id, 1), max_id IS NOT NULL);
+                END LOOP;
+            END $$;
+        """)
 
         conn.commit()
         print(f"== Seed completo: {scale_name} ==")
