@@ -233,10 +233,10 @@ class TransferenciaCreate(BaseModel):
 
 class RenglonDocumentoCreate(BaseModel):
     cod_vino: int
-    cantidad: int
+    cantidad: int = Field(ge=1)
 
 
 class IngresoCreate(BaseModel):
     id_transportista: int
-    cuit_bodega: str
+    cuit_bodega: str = Field(pattern=r"^[0-9]{11}$")
     fecha: str | None = None

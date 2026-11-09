@@ -476,8 +476,11 @@ def test_crear_transferencia_cuerpo_invalido_400_validation_error(client):
     sin_cod_vino = client.post(
         "/transferencias/1/renglones", json={"cantidad": 3}
     )
+    cantidad_cero = client.post(
+        "/transferencias/1/renglones", json={"cod_vino": 1, "cantidad": 0}
+    )
 
-    for response in (sin_sala, sin_cod_vino):
+    for response in (sin_sala, sin_cod_vino, cantidad_cero):
         assert response.status_code == 400, response.text
         body = response.json()
         assert set(body) == ERROR_KEYS
@@ -677,8 +680,11 @@ def test_ingreso_acciones_inexistentes_404_error_contrato(client):
 def test_crear_ingreso_cuerpo_invalido_400_validation_error(client):
     sin_campos = client.post("/ingresos", json={})
     sin_cod_vino = client.post("/ingresos/1/renglones", json={"cantidad": 3})
+    cuit_invalido = client.post(
+        "/ingresos", json={"id_transportista": 1, "cuit_bodega": "no-es-un-cuit"}
+    )
 
-    for response in (sin_campos, sin_cod_vino):
+    for response in (sin_campos, sin_cod_vino, cuit_invalido):
         assert response.status_code == 400, response.text
         body = response.json()
         assert set(body) == ERROR_KEYS

@@ -894,15 +894,16 @@ fijo del stub). GREEN: **18 aprobadas**. **Suite completa: `169 passed`**
 (159 base + 18 nuevas − 8 filas de stub retiradas). Redocly: válida, solo las
 2 advertencias conocidas.
 
-### Discrepancias detectadas (no corregidas, fuera de alcance)
+### Discrepancias detectadas (corregidas post-6.9)
 
-- `api/app/schemas.py` `RenglonDocumentoCreate.cantidad` no replica el
-  `minimum: 1` del contrato (mismo tipo de fidelidad que se corrigió en 6.8
-  para `ComprobanteRenglonCreate`): una `cantidad: 0` pasa la validación del
-  framework y llega a la base. Corregir toca `schemas.py` (fuera de alcance).
-- `api/app/schemas.py` `IngresoCreate.cuit_bodega` no replica el
-  `pattern: '^[0-9]{11}$'` del contrato: un CUIT malformado llega a la base y
-  responde según su CHECK/FK en lugar del 400 del contrato.
+- **Corregido:** `api/app/schemas.py` `RenglonDocumentoCreate.cantidad` no
+  replicaba el `minimum: 1` del contrato (mismo tipo de fidelidad que se
+  corrigió en 6.8 para `ComprobanteRenglonCreate`): una `cantidad: 0` pasaba
+  la validación del framework y llegaba a la base. Fidelidad restaurada con
+  `Field(ge=1)` y caso nuevo en la prueba de cuerpo inválido (400).
+- **Corregido:** `api/app/schemas.py` `IngresoCreate.cuit_bodega` no
+  replicaba el `pattern: '^[0-9]{11}$'` del contrato. Fidelidad restaurada
+  con `Field(pattern=...)` y caso nuevo en la prueba de cuerpo inválido (400).
 
 ### Requiere coordinación / Limitaciones
 
