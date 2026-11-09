@@ -1,30 +1,24 @@
-"""Stub endpoints for ingresos (Bodegas del Atuel API)."""
+"""Endpoints of the ingresos operations (Bodegas del Atuel API)."""
 
-from fastapi import APIRouter
+from datetime import date
 
+from fastapi import APIRouter, Request
+
+from ..errors import DatabaseHttpError
+from ..repos import ingresos as repo_ingresos
 from ..schemas import Ingreso, IngresoCreate, RenglonDocumentoCreate
 
 router = APIRouter(tags=["Ingresos"])
 
-_EXAMPLE_RENGLON = {
-    "cod_vino": 1,
-    "nombre_comercial": "Malbec Reserva",
-    "cantidad": 120,
-}
+
+def _fecha_iso(valor):
+    """Native DB ``date`` -> ISO string expected by the response schemas."""
+    return valor.isoformat() if isinstance(valor, date) else valor
 
 
-def _ingreso_example(cod: int, estado: str, con_renglones: bool) -> Ingreso:
-    renglones = [_EXAMPLE_RENGLON] if con_renglones else []
-    return Ingreso.model_validate(
-        {
-            "cod_ingreso": cod,
-            "fecha": "2026-11-05",
-            "estado": estado,
-            "id_transportista": 1,
-            "cuit_bodega": "30712345678",
-            "renglones": renglones,
-        }
-    )
+def _detalle(fila: dict) -> Ingreso:
+    """Shape one repository row (cabecera + renglones) as Ingreso."""
+    return Ingreso.model_validate({**fila, "fecha": _fecha_iso(fila["fecha"])})
 
 
 @router.post(
@@ -33,9 +27,16 @@ def _ingreso_example(cod: int, estado: str, con_renglones: bool) -> Ingreso:
     response_model=Ingreso,
     status_code=201,
 )
-def crear_ingreso(body: IngresoCreate) -> Ingreso:
-    # TODO(6.9): crear el ingreso en confección; si falta fecha usa CURRENT_DATE.
-    return _ingreso_example(3001, "en_confeccion", con_renglones=False)
+def crear_ingreso(request: Request, body: IngresoCreate) -> Ingreso:
+    """Create one ingreso in confeccion for ``id_transportista``.
+
+    Sends only the granted columns: ``fecha`` is optional and the INSERT's
+    ``COALESCE`` falls back to CURRENT_DATE; ``estado`` takes the DEFAULT
+    'en_confeccion' (RN-10). Every error flows through the centralized
+    handlers.
+    """
+    ficha = repo_ingresos.crear_ingreso(request.app.state.pool, **body.model_dump())
+    return _detalle(ficha)
 
 
 @router.post(
@@ -44,9 +45,29 @@ def crear_ingreso(body: IngresoCreate) -> Ingreso:
     response_model=Ingreso,
     status_code=201,
 )
-def agregar_renglon_ingreso(cod: int, body: RenglonDocumentoCreate) -> Ingreso:
-    # TODO(6.9): agregar el renglón al ingreso en confección.
-    return _ingreso_example(cod, "en_confeccion", con_renglones=True)
+def agregar_renglon_ingreso(
+    cod: int, request: Request, body: RenglonDocumentoCreate
+) -> Ingreso:
+    """Add one renglon (cod_vino, cantidad) while the document is en_confeccion.
+
+    Editing renglones outside ``en_confeccion`` raises ``[RN-12]`` (P0001 ->
+    409): the error flows through the centralized handlers, nothing is
+    written. Only the missing-document case is raised here.
+    """
+    ficha = repo_ingresos.agregar_renglon_ingreso(
+        request.app.state.pool, cod, **body.model_dump()
+    )
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe el ingreso {cod}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return _detalle(ficha)
 
 
 @router.post(
@@ -54,9 +75,26 @@ def agregar_renglon_ingreso(cod: int, body: RenglonDocumentoCreate) -> Ingreso:
     operation_id="terminarIngreso",
     response_model=Ingreso,
 )
-def terminar_ingreso(cod: int) -> Ingreso:
-    # TODO(6.9): pasar el ingreso de en_confeccion a terminado.
-    return _ingreso_example(cod, "terminado", con_renglones=True)
+def terminar_ingreso(cod: int, request: Request) -> Ingreso:
+    """Advance the ingreso from en_confeccion to terminado.
+
+    Trigger T3 validates the transition and raises ``[RN-10]`` (P0001 ->
+    409) on any invalid move. Repeating ``terminar`` on an already
+    ``terminado`` document is a silent no-op that returns 200: the trigger
+    never fires when ``estado`` does not change (open team decision P1/P3).
+    """
+    ficha = repo_ingresos.terminar_ingreso(request.app.state.pool, cod)
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe el ingreso {cod}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return _detalle(ficha)
 
 
 @router.post(
@@ -64,6 +102,13 @@ def terminar_ingreso(cod: int) -> Ingreso:
     operation_id="procesarIngreso",
     response_model=Ingreso,
 )
-def procesar_ingreso(cod: int) -> Ingreso:
-    # TODO(6.9): invocar sp_procesar_ingreso e impactar el stock del depósito.
-    return _ingreso_example(cod, "procesado", con_renglones=True)
+def procesar_ingreso(cod: int, request: Request) -> Ingreso:
+    """Process the ingreso: ``CALL sp_procesar_ingreso``.
+
+    The procedure upserts ``stock_deposito`` and sets ``procesado``: a
+    missing document raises P0002 (-> 404) and any pre-condition failure
+    raises ``[RN-10]`` (P0001 -> 409, nothing persists). The router maps
+    nothing: both errors flow through the centralized handlers.
+    """
+    ficha = repo_ingresos.procesar_ingreso(request.app.state.pool, cod)
+    return _detalle(ficha)

@@ -43,8 +43,6 @@ _PDF = (
 
 VINO_RESUMEN_KEYS = set(_PDF)
 VINO_DETALLE_KEYS = VINO_RESUMEN_KEYS | {"composicion", "maridajes", "stock"}
-TRANSFERENCIA_KEYS = {"nro_solicitud", "id_sala", "fecha_confeccion", "estado"}
-INGRESO_KEYS = {"cod_ingreso", "fecha", "estado", "id_transportista", "cuit_bodega"}
 TOP_VINO_KEYS = {"cod_vino", "nombre_comercial", "botellas_vendidas"}
 VENTA_MENSUAL_KEYS = {
     "id_sala",
@@ -61,12 +59,6 @@ VINO_SIN_STOCK_KEYS = {
 }
 TRANSPORTISTA_KEYS = {"id_transportista", "razon_social", "ingresos_trasladados"}
 
-TRANSFERENCIA_CREATE_BODY = {"id_sala": 1}
-
-INGRESO_CREATE_BODY = {"id_transportista": 1, "cuit_bodega": "30712345678"}
-
-REGLON_CREATE_BODY = {"cod_vino": 1, "cantidad": 120}
-
 # (method, path, body, expected_status, expected_keys)
 # expected_keys=None means no response body (204).
 ROUTES = [
@@ -75,23 +67,11 @@ ROUTES = [
     # real: their behavior is covered by test_vinos_endpoints.py against a
     # real database, so they no longer belong to the fixed-payload stub
     # matrix. The 5 /clientes operations (6.7) moved to
-    # test_clientes_endpoints.py and the 2 /comprobantes operations (6.8) to
-    # test_comprobantes_endpoints.py for the same reason. Remove rows here as
-    # each endpoint becomes real (6.9-6.10).
-    ("POST", "/transferencias", TRANSFERENCIA_CREATE_BODY, 201, TRANSFERENCIA_KEYS),
-    (
-        "POST",
-        "/transferencias/5001/renglones",
-        REGLON_CREATE_BODY,
-        201,
-        TRANSFERENCIA_KEYS,
-    ),
-    ("POST", "/transferencias/5001/terminar", None, 200, TRANSFERENCIA_KEYS),
-    ("POST", "/transferencias/5001/procesar", None, 200, TRANSFERENCIA_KEYS),
-    ("POST", "/ingresos", INGRESO_CREATE_BODY, 201, INGRESO_KEYS),
-    ("POST", "/ingresos/3001/renglones", REGLON_CREATE_BODY, 201, INGRESO_KEYS),
-    ("POST", "/ingresos/3001/terminar", None, 200, INGRESO_KEYS),
-    ("POST", "/ingresos/3001/procesar", None, 200, INGRESO_KEYS),
+    # test_clientes_endpoints.py, the 2 /comprobantes operations (6.8) to
+    # test_comprobantes_endpoints.py and the 8 document operations
+    # (4 /transferencias + 4 /ingresos, 6.9) to test_documentos_endpoints.py
+    # for the same reason. Remove rows here as each endpoint becomes real
+    # (6.10).
     ("GET", "/reportes/top-vinos", None, 200, TOP_VINO_KEYS),
     ("GET", "/reportes/ventas-por-sala", None, 200, VENTA_MENSUAL_KEYS),
     ("GET", "/reportes/vinos-sin-stock?id_sala=1", None, 200, VINO_SIN_STOCK_KEYS),

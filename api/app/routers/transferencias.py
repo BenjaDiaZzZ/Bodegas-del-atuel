@@ -1,28 +1,25 @@
-"""Stub endpoints for transferencias (Bodegas del Atuel API)."""
+"""Endpoints of the transferencias operations (Bodegas del Atuel API)."""
 
-from fastapi import APIRouter
+from datetime import date
 
+from fastapi import APIRouter, Request
+
+from ..errors import DatabaseHttpError
+from ..repos import transferencias as repo_transferencias
 from ..schemas import RenglonDocumentoCreate, Transferencia, TransferenciaCreate
 
 router = APIRouter(tags=["Transferencias"])
 
-_EXAMPLE_RENGLON = {
-    "cod_vino": 1,
-    "nombre_comercial": "Malbec Reserva",
-    "cantidad": 120,
-}
+
+def _fecha_iso(valor):
+    """Native DB ``date`` -> ISO string expected by the response schemas."""
+    return valor.isoformat() if isinstance(valor, date) else valor
 
 
-def _transferencia_example(nro: int, estado: str, con_renglones: bool) -> Transferencia:
-    renglones = [_EXAMPLE_RENGLON] if con_renglones else []
+def _detalle(fila: dict) -> Transferencia:
+    """Shape one repository row (cabecera + renglones) as Transferencia."""
     return Transferencia.model_validate(
-        {
-            "nro_solicitud": nro,
-            "id_sala": 1,
-            "fecha_confeccion": "2026-11-05",
-            "estado": estado,
-            "renglones": renglones,
-        }
+        {**fila, "fecha_confeccion": _fecha_iso(fila["fecha_confeccion"])}
     )
 
 
@@ -32,9 +29,17 @@ def _transferencia_example(nro: int, estado: str, con_renglones: bool) -> Transf
     response_model=Transferencia,
     status_code=201,
 )
-def crear_transferencia(body: TransferenciaCreate) -> Transferencia:
-    # TODO(6.9): crear la transferencia; la base fuerza la fecha (RN-11).
-    return _transferencia_example(5001, "en_confeccion", con_renglones=False)
+def crear_transferencia(request: Request, body: TransferenciaCreate) -> Transferencia:
+    """Create one transferencia in confeccion for ``id_sala``.
+
+    The request carries ONLY ``id_sala``: ``fecha_confeccion`` is NEVER sent
+    (trigger T5 forces CURRENT_DATE, RN-11) and ``estado`` takes the DEFAULT
+    'en_confeccion'. Every error flows through the centralized handlers.
+    """
+    ficha = repo_transferencias.crear_transferencia(
+        request.app.state.pool, **body.model_dump()
+    )
+    return _detalle(ficha)
 
 
 @router.post(
@@ -43,9 +48,29 @@ def crear_transferencia(body: TransferenciaCreate) -> Transferencia:
     response_model=Transferencia,
     status_code=201,
 )
-def agregar_renglon_transferencia(nro: int, body: RenglonDocumentoCreate) -> Transferencia:
-    # TODO(6.9): agregar el renglón a la transferencia en confección.
-    return _transferencia_example(nro, "en_confeccion", con_renglones=True)
+def agregar_renglon_transferencia(
+    nro: int, request: Request, body: RenglonDocumentoCreate
+) -> Transferencia:
+    """Add one renglon (cod_vino, cantidad) while the document is en_confeccion.
+
+    Editing renglones outside ``en_confeccion`` raises ``[RN-12]`` (P0001 ->
+    409): the error flows through the centralized handlers, nothing is
+    written. Only the missing-document case is raised here.
+    """
+    ficha = repo_transferencias.agregar_renglon_transferencia(
+        request.app.state.pool, nro, **body.model_dump()
+    )
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe la transferencia {nro}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return _detalle(ficha)
 
 
 @router.post(
@@ -53,9 +78,26 @@ def agregar_renglon_transferencia(nro: int, body: RenglonDocumentoCreate) -> Tra
     operation_id="terminarTransferencia",
     response_model=Transferencia,
 )
-def terminar_transferencia(nro: int) -> Transferencia:
-    # TODO(6.9): pasar la transferencia de en_confeccion a terminado.
-    return _transferencia_example(nro, "terminado", con_renglones=True)
+def terminar_transferencia(nro: int, request: Request) -> Transferencia:
+    """Advance the transferencia from en_confeccion to terminado.
+
+    Trigger T4 validates the transition and raises ``[RN-11]`` (P0001 ->
+    409) on any invalid move. Repeating ``terminar`` on an already
+    ``terminado`` document is a silent no-op that returns 200: the trigger
+    never fires when ``estado`` does not change (open team decision P1/P3).
+    """
+    ficha = repo_transferencias.terminar_transferencia(request.app.state.pool, nro)
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe la transferencia {nro}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return _detalle(ficha)
 
 
 @router.post(
@@ -63,6 +105,13 @@ def terminar_transferencia(nro: int) -> Transferencia:
     operation_id="procesarTransferencia",
     response_model=Transferencia,
 )
-def procesar_transferencia(nro: int) -> Transferencia:
-    # TODO(6.9): invocar sp_procesar_transferencia y mover el stock.
-    return _transferencia_example(nro, "procesado", con_renglones=True)
+def procesar_transferencia(nro: int, request: Request) -> Transferencia:
+    """Process the transferencia: ``CALL sp_procesar_transferencia``.
+
+    The procedure moves the stock depósito -> sala and sets ``procesado``:
+    a missing document raises P0002 (-> 404) and any pre-condition failure
+    raises ``[RN-11]`` (P0001 -> 409, nothing persists). The router maps
+    nothing: both errors flow through the centralized handlers.
+    """
+    ficha = repo_transferencias.procesar_transferencia(request.app.state.pool, nro)
+    return _detalle(ficha)

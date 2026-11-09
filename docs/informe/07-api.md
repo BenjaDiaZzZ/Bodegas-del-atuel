@@ -823,3 +823,93 @@ passed`** (153 base + 8 nuevos − 2 filas de stub retiradas).
 - La base de verificación sigue siendo el contenedor efímero con migraciones
   001–008 y catálogos mínimos creados como superusuario en las pruebas.
 - No se hizo commit, push ni PR por decisión explícita de la tarea.
+
+## Tarea 6.9 — Transferencias e ingresos
+
+### Alcance
+
+Las ocho operaciones de documentos dejaron de ser stubs y se conectan a
+`repos/transferencias.py` e `repos/ingresos.py` (6.3, ya probados en
+`test_repos_documentos.py`): para cada circuito, `POST` de cabecera,
+`POST …/renglones`, `POST …/terminar` y `POST …/procesar`.
+`api/tests/test_stubs.py` perdió sus 8 filas (4 de `/transferencias` y 4 de
+`/ingresos`) y sus constantes `TRANSFERENCIA_KEYS`/`INGRESO_KEYS`/
+`TRANSFERENCIA_CREATE_BODY`/`INGRESO_CREATE_BODY`/`REGLON_CREATE_BODY` (mismo
+patrón que 6.5–6.8) y la cobertura HTTP vive en
+`api/tests/test_documentos_endpoints.py`. Solo `/salud` y `/reportes`
+(6.10) siguen en la matriz de stubs.
+
+### Decisiones
+
+- **`POST /transferencias`** → `repo.crear_transferencia(...)`: 201 con la
+  cabecera en `en_confeccion`. El cuerpo lleva SOLO `id_sala`:
+  `fecha_confeccion` NUNCA viaja (el trigger T5 fuerza `CURRENT_DATE`,
+  RN-11) y `estado` toma el DEFAULT. La prueba envía además una
+  `fecha_confeccion` intrusa y verifica que el 201 devuelve hoy: Pydantic
+  descarta el campo extra y la base fuerza la fecha.
+- **`POST …/renglones`** → solo `(cod_vino, cantidad)` y solo en
+  `en_confeccion`: editar renglones fuera de ese estado dispara T6
+  (`[RN-12]`, P0001 → 409) sin dejar nada escrito. Documento inexistente →
+  404 con body `Error` (`NOT_FOUND`, mensaje `No existe la transferencia
+  <nro>.` / `No existe el ingreso <cod>.`), mismo patrón de clientes/vinos.
+- **`POST …/terminar`** → `UPDATE` de estado validado por el trigger (T4/T3,
+  RN-11/RN-10): transición inválida → 409 con `regla`. **Decisión abierta
+  (P1/P3)**: repetir `terminar` sobre un documento ya `terminado` es un
+  no-op que responde 200 — el trigger compara OLD vs NEW y no se dispara si
+  `estado` no cambia. Se cableó así, sin inventar un 409; el contrato no
+  distingue el caso y el equipo debe decidir si se documenta la idempotencia
+  o se agrega el 409.
+- **`POST …/procesar`** → `CALL sp_procesar_transferencia` /
+  `CALL sp_procesar_ingreso` dentro de la transacción del repo. Errores 100 %
+  centralizados: documento inexistente → P0002 → 404; precondición violada
+  (`[RN-11]`/`[RN-10]`, incluido stock insuficiente en el depósito) → P0001 →
+  409 con `regla` y **cero persistencia** (la llamada entera hace
+  ROLLBACK). La API no calcula ni mueve una botella.
+- **`POST /ingresos`** → misma forma que transferencias con `cod_ingreso` y
+  `fecha` opcional: si no viaja, el `COALESCE(%s, CURRENT_DATE)` del INSERT
+  usa la fecha del día (RN-10).
+- **Dos 404 de origen distinto**: en `/renglones` y `/terminar` el repo
+  devuelve `None` y el router levanta `NOT_FOUND`; en `/procesar` el que
+  habla primero es el procedimiento (P0002 → 404, `codigo: P0002`). Mismo
+  status, `codigo` distinto según quién detecte la ausencia.
+- **Serialización de fechas**: mismo helper `_fecha_iso` que 6.7/6.8 — el
+  repo devuelve `date` nativo y los esquemas del contrato lo declaran `str`.
+
+### Pruebas (18 nuevas, integración HTTP contra PostgreSQL 16)
+
+Por circuito: alta 201 con shape completo (`renglones: []` incluidos) y fecha
+forzada/por defecto del día; renglón 201 en `en_confeccion`; renglón tras
+`terminar` → 409 `RN-12` con atomicidad (conteo de renglones intacto);
+`terminar` 200 con estado visible y repetición 200 (no-op, decisión abierta);
+`procesar` antes de `terminar` → 409 `RN-11`/`RN-10` con stock intacto;
+`procesar` 200 con efectos reales (transferencia: depósito 10→7 y sala 0→3;
+ingreso: `stock_deposito` upserteado en 3 y 120) y stock insuficiente → 409
+`RN-11` atómico (depósito, sala y estado sin cambios); `terminar` tras
+`procesado` → 409; las tres acciones sobre documento inexistente → 404
+(`NOT_FOUND` en renglones/terminar, `P0002` en procesar); cuerpo inválido →
+400 `VALIDATION_ERROR`. RED observado primero: **15 fallos, 3 aprobadas**
+contra los stubs (las 3 que pasaban: los dos 400 —la validación del framework
+corre antes del handler stub— y el 200 de `terminar`, idéntico al payload
+fijo del stub). GREEN: **18 aprobadas**. **Suite completa: `169 passed`**
+(159 base + 18 nuevas − 8 filas de stub retiradas). Redocly: válida, solo las
+2 advertencias conocidas.
+
+### Discrepancias detectadas (no corregidas, fuera de alcance)
+
+- `api/app/schemas.py` `RenglonDocumentoCreate.cantidad` no replica el
+  `minimum: 1` del contrato (mismo tipo de fidelidad que se corrigió en 6.8
+  para `ComprobanteRenglonCreate`): una `cantidad: 0` pasa la validación del
+  framework y llega a la base. Corregir toca `schemas.py` (fuera de alcance).
+- `api/app/schemas.py` `IngresoCreate.cuit_bodega` no replica el
+  `pattern: '^[0-9]{11}$'` del contrato: un CUIT malformado llega a la base y
+  responde según su CHECK/FK en lugar del 400 del contrato.
+
+### Requiere coordinación / Limitaciones
+
+- **P1/P3**: cerrar la decisión abierta «repetir `terminar` → 200 idempotente
+  vs 409» y documentarla en el contrato si se elige la primera opción.
+- **P4**: los 8 endpoints de documentos ya responden contra la base real con
+  los paths y status de OpenAPI; solo quedan los stubs de `/reportes` (6.10).
+- La base de verificación sigue siendo el contenedor efímero con migraciones
+  001–008 y catálogos mínimos creados como superusuario en las pruebas.
+- No se hizo commit, push ni PR por decisión explícita de la tarea.
