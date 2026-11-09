@@ -744,6 +744,7 @@ posterior del repo.
   retirar.
 - No se hizo commit, push ni PR por decisión explícita de la tarea.
 
+
 ## Tarea 6.8 — Comprobantes (POST y GET)
 
 ### Alcance
@@ -1020,3 +1021,37 @@ conocidas.
   `LIMIT` ya quedaron fijados a nivel repositorio en
   `test_repos_reportes.py`.
 - No se hizo commit, push ni PR por decisión explícita de la tarea.
+
+## Tarea 6.12 — Demostración de inyección SQL fallida
+
+### Alcance
+
+Demostrar en vivo que un valor malicioso enviado como **valor de filtro**
+nunca se interpreta como SQL: viaja como parámetro bound y se compara como
+texto literal. La prueba automatizada equivalente ya existe
+(`test_filtros_seguros_contra_inyeccion` en `test_repos_vinos.py` y
+`test_repos_clientes.py`); esta sección deja la **captura** pedida por el
+plan (6.12).
+
+### Captura (API viva sobre PostgreSQL 16 efímero, sesión 2026-11-09)
+
+```console
+$ curl -s "http://127.0.0.1:8099/vinos?nombre=%27%3B%20DROP%20TABLE%20vino%3B%20--"
+{"data":[],"meta":{"page":1,"per_page":20,"total":0,"total_pages":0}}
+
+$ curl -s "http://127.0.0.1:8099/clientes?q=%27%3B%20DELETE%20FROM%20cliente%3B%20--"
+{"data":[],"meta":{"page":1,"per_page":20,"total":0,"total_pages":0}}
+
+$ psql -tAc "SELECT 'vino existe, filas=' || count(*) FROM vino;
+              SELECT 'cliente existe, filas=' || count(*) FROM cliente;"
+vino existe, filas=0
+cliente existe, filas=0
+```
+
+Los dos valores decodificados son `'; DROP TABLE vino; --` y
+`'; DELETE FROM cliente; --`. La API responde 200 con resultado vacío (el
+texto literal no coincide con ningún nombre) y **ambas tablas siguen
+existentes** después de los intentos. No hay concatenación de valores del
+usuario en ninguna consulta: todos los filtros viajan como parámetros bound
+(`%(x)s`) con casts explícitos, y los comodines `%%` del `ILIKE` viven en el
+literal SQL, no en el input.
