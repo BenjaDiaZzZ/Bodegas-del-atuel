@@ -43,16 +43,6 @@ _PDF = (
 
 VINO_RESUMEN_KEYS = set(_PDF)
 VINO_DETALLE_KEYS = VINO_RESUMEN_KEYS | {"composicion", "maridajes", "stock"}
-COMPROBANTE_KEYS = {
-    "nro_comprobante",
-    "fecha",
-    "id_cliente",
-    "id_sala",
-    "subtotal",
-    "descuento",
-    "total",
-    "renglones",
-}
 TRANSFERENCIA_KEYS = {"nro_solicitud", "id_sala", "fecha_confeccion", "estado"}
 INGRESO_KEYS = {"cod_ingreso", "fecha", "estado", "id_transportista", "cuit_bodega"}
 TOP_VINO_KEYS = {"cod_vino", "nombre_comercial", "botellas_vendidas"}
@@ -71,12 +61,6 @@ VINO_SIN_STOCK_KEYS = {
 }
 TRANSPORTISTA_KEYS = {"id_transportista", "razon_social", "ingresos_trasladados"}
 
-COMPROBANTE_CREATE_BODY = {
-    "id_cliente": 1,
-    "id_sala": 1,
-    "renglones": [{"cod_vino": 1, "cantidad": 3}],
-}
-
 TRANSFERENCIA_CREATE_BODY = {"id_sala": 1}
 
 INGRESO_CREATE_BODY = {"id_transportista": 1, "cuit_bodega": "30712345678"}
@@ -91,10 +75,9 @@ ROUTES = [
     # real: their behavior is covered by test_vinos_endpoints.py against a
     # real database, so they no longer belong to the fixed-payload stub
     # matrix. The 5 /clientes operations (6.7) moved to
-    # test_clientes_endpoints.py for the same reason. Remove rows here as
-    # each endpoint becomes real (6.8-6.10).
-    ("POST", "/comprobantes", COMPROBANTE_CREATE_BODY, 201, COMPROBANTE_KEYS),
-    ("GET", "/comprobantes/1001", None, 200, COMPROBANTE_KEYS),
+    # test_clientes_endpoints.py and the 2 /comprobantes operations (6.8) to
+    # test_comprobantes_endpoints.py for the same reason. Remove rows here as
+    # each endpoint becomes real (6.9-6.10).
     ("POST", "/transferencias", TRANSFERENCIA_CREATE_BODY, 201, TRANSFERENCIA_KEYS),
     (
         "POST",

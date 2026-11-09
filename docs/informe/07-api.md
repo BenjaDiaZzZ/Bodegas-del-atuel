@@ -743,3 +743,82 @@ posterior del repo.
   contrato las declaran `str`; si se migraran a `date`, ese helper se podría
   retirar.
 - No se hizo commit, push ni PR por decisión explícita de la tarea.
+
+## Tarea 6.8 — Comprobantes (POST y GET)
+
+### Alcance
+
+Las dos operaciones de `/comprobantes` dejaron de ser stubs y se conectan a
+`repos/comprobantes.py` (6.3, ya probado en `test_repos_comprobantes.py`):
+`POST /comprobantes` (201 con el detalle completo) y `GET /comprobantes/{nro}`
+(200 o 404). `api/tests/test_stubs.py` perdió sus 2 filas de `/comprobantes`
+y sus constantes `COMPROBANTE_KEYS`/`COMPROBANTE_CREATE_BODY` (mismo patrón
+que 6.5–6.7) y la cobertura HTTP vive en `api/tests/test_comprobantes_endpoints.py`.
+
+### Decisiones
+
+- **POST `/comprobantes`** → `repo.crear_comprobante(...)`: 201 con el
+  `Comprobante` completo. El cuerpo lleva SOLO `id_cliente`, `id_sala`
+  (opcionalmente `fecha`) y `renglones` como `(cod_vino, cantidad)`: jamás se
+  envían `precio_unitario`, `descuento`, `subtotal` ni `total`, ni
+  `nro_comprobante` (identity). La base calcula todo por
+  triggers (T1 completa precio/descuento/subtotal y valida stock con RN-09;
+  T2 descuenta `stock_sala` y recalcula la cabecera con RN-08) y el repo
+  inserta los renglones ordenados por `cod_vino ASC` (orden único de locks).
+- **GET `/comprobantes/{nro}`** → `repo.obtener_comprobante(...)`; `None` →
+  404 con body `Error` (`NOT_FOUND`, mensaje `No existe el comprobante <nro>.`),
+  igual que el patrón de clientes/vinos. La respuesta expone la cabecera con
+  los totales calculados por la base y los renglones con sus datos derivados,
+  en el orden en que la base los guarda (`cod_vino ASC`).
+- **Errores 100 % centralizados**: el router no mapea nada. Stock insuficiente
+  → `P0001 '[RN-09] …'` → 409 con `regla: RN-09` y **cero persistencia**
+  (ROLLBACK verificado por la prueba); `cod_vino` repetido dentro de
+  `renglones` → PK compuesta 23505 → 409; `id_cliente` inexistente → FK de la
+  cabecera 23503 → 422; cuerpo inválido (campo ausente) → 400
+  `VALIDATION_ERROR` por el handler del framework.
+- **Serialización de fechas**: mismo helper `_fecha_iso` que clientes — el repo
+  devuelve `date` nativo y el esquema del contrato lo declara `str`.
+- **Discrepancia de la FK de vino**: un `cod_vino` inexistente NO produce
+  422/23503 como un `id_cliente` inexistente: el trigger T1 de
+  `renglon_comprobante` valida el stock del vino y lanza `[RN-09]` (409)
+  ANTES de que la FK contra `vino` pueda fallar. La prueba
+  `test_crear_comprobante_vino_inexistente_409_rn09_a_nivel_base` fija ese
+  comportamiento real de la base: la API no lo altera (regla de oro).
+
+### Pruebas (8 nuevas, integración HTTP contra PostgreSQL 16)
+
+POST 201 con 2 renglones enviados en orden inverso y totales exactos
+verificados con fuente independiente (precio 100.00, socio 10 % de R-002:
+renglones 270/180, cabecera subtotal 500 / descuento 50 / total 450) más
+renglones presentados ordenados por `cod_vino ASC` y stock descontado por la
+base (5→2 y 3→1); roundtrip GET 200 idéntico al POST; GET inexistente → 404
+`Error`; stock insuficiente → 409 `RN-09` con **atomicidad** (0 comprobantes
+del cliente, stock intacto) y duplicado de `cod_vino` → 409/`23505` igualmente
+atómico; `id_cliente` inexistente → 422/`23503`; `cod_vino` inexistente →
+409 `[RN-09]` (T1 decide antes que la FK); cuerpo inválido (falta `id_sala` /
+falta `renglones`) → 400 `VALIDATION_ERROR`. RED observado primero: **6
+fallos contra los stubs** (el test de 400 pasa en RED porque la validación
+del framework corre antes del handler stub). **Suite completa: `159
+passed`** (153 base + 8 nuevos − 2 filas de stub retiradas).
+
+### Discrepancias detectadas (no corregidas, fuera de alcance)
+
+- `api/app/schemas.py` `ComprobanteCreate.renglones` no replica el
+  `minItems: 1` del contrato, ni `ComprobanteRenglonCreate.cantidad` el
+  `minimum: 1`: un cuerpo con `renglones: []` sería aceptado por el esquema
+  (la base crearía un comprobante sin renglones) y una `cantidad: 0` llegaría
+  a la base, que responde 422/`23514` por su CHECK en vez del 400 del
+  contrato. Corrige en `schemas.py` (ge=1 / min_length=1), no en el router.
+- El POST ya documenta los status 400/409/422 del manejo central, así que no
+  hace falta tocarlo; una próxima revisión del contrato podría agregar una
+  nota para el caso particular de `cod_vino` inexistente (responde 409 con
+  `regla: RN-09`, dentro del 409 genérico de Conflict ya previsto).
+
+### Requiere coordinación / Limitaciones
+
+- **P4**: `/comprobantes` ya responde contra la base real con los paths y
+  status de OpenAPI; el resto de los stubs (transferencias, ingresos,
+  reportes) sigue pendiente (6.9–6.10).
+- La base de verificación sigue siendo el contenedor efímero con migraciones
+  001–008 y catálogos mínimos creados como superusuario en las pruebas.
+- No se hizo commit, push ni PR por decisión explícita de la tarea.

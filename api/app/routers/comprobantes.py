@@ -1,52 +1,55 @@
-"""Stub endpoint for comprobantes (Bodegas del Atuel API)."""
+"""Endpoints of the comprobantes operations (Bodegas del Atuel API)."""
 
-from fastapi import APIRouter
+from datetime import date
 
+from fastapi import APIRouter, Request
+
+from ..errors import DatabaseHttpError
+from ..repos import comprobantes as repo_comprobantes
 from ..schemas import Comprobante, ComprobanteCreate
 
 router = APIRouter(tags=["Comprobantes"])
 
-_EXAMPLE_RENGLON = {
-    "cod_vino": 1,
-    "nombre_comercial": "Malbec Reserva",
-    "cantidad": 3,
-    "precio_unitario": 12500.0,
-    "descuento": 3750.0,
-    "subtotal": 33750.0,
-}
+
+def _fecha_iso(valor):
+    """Native DB ``date`` -> ISO string expected by the response schemas."""
+    return valor.isoformat() if isinstance(valor, date) else valor
 
 
-def _comprobante_example(nro: int) -> Comprobante:
-    return Comprobante.model_validate(
-        {
-            "nro_comprobante": nro,
-            "fecha": "2026-11-05",
-            "id_cliente": 1,
-            "id_sala": 1,
-            "subtotal": 37500.0,
-            "descuento": 3750.0,
-            "total": 33750.0,
-            "renglones": [_EXAMPLE_RENGLON],
-        }
-    )
+def _detalle(fila: dict) -> Comprobante:
+    """Shape one repository row (cabecera + renglones) as Comprobante."""
+    return Comprobante.model_validate({**fila, "fecha": _fecha_iso(fila["fecha"])})
 
 
-@router.post(
-    "/comprobantes",
-    operation_id="crearComprobante",
-    response_model=Comprobante,
-    status_code=201,
-)
-def crear_comprobante(body: ComprobanteCreate) -> Comprobante:
-    # TODO(6.8): registrar la venta completa en una transacción (solo cod_vino y cantidad).
-    return _comprobante_example(1001)
+@router.post("/comprobantes", operation_id="crearComprobante", response_model=Comprobante, status_code=201)
+def crear_comprobante(request: Request, body: ComprobanteCreate) -> Comprobante:
+    """Register the full sale in one transaction: cabecera plus renglones.
+
+    The request carries ONLY ``id_cliente``, ``id_sala`` (optionally
+    ``fecha``) and ``renglones`` as ``(cod_vino, cantidad)``: the database
+    triggers compute ``precio_unitario``, ``descuento``, ``subtotal`` per
+    renglón and the cabecera ``subtotal``/``descuento``/``total``
+    (RN-08/RN-09). Every error flows through the centralized handlers:
+    insufficient stock raises ``[RN-09]`` (P0001 -> 409, nothing persists),
+    a repeated ``cod_vino`` violates the composite PK (23505 -> 409) and a
+    missing cliente/vino FK parent maps to 422.
+    """
+    ficha = repo_comprobantes.crear_comprobante(request.app.state.pool, **body.model_dump())
+    return _detalle(ficha)
 
 
-@router.get(
-    "/comprobantes/{nro}",
-    operation_id="obtenerComprobante",
-    response_model=Comprobante,
-)
-def obtener_comprobante(nro: int) -> Comprobante:
-    # TODO(6.8): leer el comprobante con sus renglones desde PostgreSQL.
-    return _comprobante_example(nro)
+@router.get("/comprobantes/{nro}", operation_id="obtenerComprobante", response_model=Comprobante)
+def obtener_comprobante(nro: int, request: Request) -> Comprobante:
+    """Return the comprobante with its renglones as stored, or 404."""
+    ficha = repo_comprobantes.obtener_comprobante(request.app.state.pool, nro)
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe el comprobante {nro}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return _detalle(ficha)
