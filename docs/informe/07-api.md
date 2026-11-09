@@ -1055,3 +1055,55 @@ existentes** después de los intentos. No hay concatenación de valores del
 usuario en ninguna consulta: todos los filtros viajan como parámetros bound
 (`%(x)s`) con casts explícitos, y los comodines `%%` del `ILIKE` viven en el
 literal SQL, no en el input.
+
+## Tarea 6.13 — Dockerfile de la API y coherencia OpenAPI/rutas
+
+### Alcance
+
+Dos verificaciones pedidas por el plan (6.13): (a) un `Dockerfile` para la
+API que `docker compose` pueda referenciar desde el lado de P4, y (b) la
+coherencia entre `api/openapi.yaml` y las rutas reales.
+
+### Dockerfile (`api/Dockerfile`)
+
+- Imagen `python:3.11-slim`; instala `api/requirements.txt` (pinneado) y
+  copia solo `api/app`. Contexto de build = raíz del repo:
+  `docker build -f api/Dockerfile -t bodegas-api .`
+- **Sin secretos en la imagen**: sin `ENV` de credenciales (el linter
+  `SecretsUsedInArgOrEnv` lo marca incluso con valores vacíos); las
+  variables viajan en `docker run --env-file .env`. La app falla rápido si
+  falta configuración (`app/config.py`).
+- `HEALTHCHECK` contra `GET /salud` (503 si la base no está → unhealthy).
+- **Verificado**: `docker build` completo, exit 0, sin warnings. El
+  `docker compose up` conjunto (base + API) queda del lado de P4 (el compose
+  es su archivo); receta de ejecución documentada en el propio Dockerfile.
+
+### Coherencia OpenAPI ↔ rutas reales
+
+Cotejo automático (script que compara `api/openapi.yaml` con `app.openapi()`
+de la app armada con los 7 routers):
+
+```
+operaciones contrato: 26 | rutas app: 26
+en contrato sin ruta: []
+rutas sin contrato: []
+COHERENCIA: OK — las 26 operaciones del contrato tienen ruta real
+```
+
+Con 6.10 terminaron los stubs: las 26 operaciones (25 del contrato + `/salud`)
+apuntan a implementación real contra la base. La matriz `test_stubs.py` quedó
+reducida a `/salud` y la cobertura de cada ruta vive en sus pruebas HTTP.
+
+### Estado de 6.11 (pruebas automáticas)
+
+El mínimo del plan (≥8 pruebas, ≥3 que violen reglas) está superado: la
+suite tiene 174 pruebas con múltiples violaciones de reglas verificadas
+(RN-05 diferido, RN-09 sin stock, 23505 duplicados, 23503 FK, 422 CHECK,
+42501 privilegios, 400 validación). Lo que falta de 6.11 es la integración
+al CI (correr `pytest api/tests` en el workflow), que es del alcance de P4.
+
+### Requiere coordinación
+
+- **P4**: referenciar `api/Dockerfile` en `docker-compose.yml` y agregar la
+  instalación de `api/requirements.txt` + `pytest api/tests` al workflow de
+  CI (6.11).
