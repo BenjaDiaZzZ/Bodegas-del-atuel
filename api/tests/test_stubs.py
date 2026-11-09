@@ -122,9 +122,7 @@ REGLON_CREATE_BODY = {"cod_vino": 1, "cantidad": 120}
 # expected_keys=None means no response body (204).
 ROUTES = [
     ("GET", "/salud", None, 200, SALUD_KEYS),
-    ("GET", "/vinos", None, 200, PAGE_KEYS | VINO_RESUMEN_KEYS),
     ("POST", "/vinos", VINO_CREATE_BODY, 201, VINO_DETALLE_KEYS),
-    ("GET", "/vinos/1", None, 200, VINO_DETALLE_KEYS),
     ("PUT", "/vinos/1", VINO_CREATE_BODY, 200, VINO_DETALLE_KEYS),
     ("DELETE", "/vinos/1", None, 204, None),
     ("GET", "/clientes", None, 200, PAGE_KEYS | CLIENTE_RESUMEN_KEYS),

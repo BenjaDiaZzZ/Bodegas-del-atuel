@@ -1,9 +1,11 @@
-"""Stub endpoints for vinos (Bodegas del Atuel API)."""
+"""Real GET endpoints and stub writes for vinos (Bodegas del Atuel API)."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
+from ..errors import DatabaseHttpError
+from ..repos import vinos as repo_vinos
 from ..schemas import (
     PageMeta,
     VinoCreate,
@@ -55,18 +57,38 @@ def detalle_vino_example(cod: int) -> VinoDetalle:
 
 @router.get("/vinos", operation_id="listarVinos", response_model=VinoPage)
 def listar_vinos(
+    request: Request,
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=100)] = 20,
     nombre: str | None = None,
-    tipo: str | None = None,
+    tipo: Literal["tinto", "blanco", "rosado", "espumante"] | None = None,
     id_cepa: int | None = None,
-    cuit_bodega: str | None = None,
+    cuit_bodega: Annotated[str | None, Query(pattern=r"^[0-9]{11}$")] = None,
     anada: int | None = None,
 ) -> VinoPage:
-    # TODO(6.5): leer el catálogo con filtros y paginación desde PostgreSQL.
+    """List the wine catalog with optional filters and pagination.
+
+    Filters/reading delegate to the repository (app_rw). ``total_pages``
+    is 0 when the filtered total is 0: an empty result has no pages.
+    """
+    filas, total = repo_vinos.listar_vinos(
+        request.app.state.pool,
+        page=page,
+        per_page=per_page,
+        nombre=nombre,
+        tipo=tipo,
+        id_cepa=id_cepa,
+        cuit_bodega=cuit_bodega,
+        anada=anada,
+    )
     return VinoPage(
-        data=[VinoResumen.model_validate(_EXAMPLE_VINO)],
-        meta=PageMeta.model_validate(_EXAMPLE_META),
+        data=[VinoResumen.model_validate(fila) for fila in filas],
+        meta=PageMeta(
+            page=page,
+            per_page=per_page,
+            total=total,
+            total_pages=(total + per_page - 1) // per_page,
+        ),
     )
 
 
@@ -77,9 +99,15 @@ def crear_vino(body: VinoCreate) -> VinoDetalle:
 
 
 @router.get("/vinos/{cod}", operation_id="obtenerVino", response_model=VinoDetalle)
-def obtener_vino(cod: int) -> VinoDetalle:
-    # TODO(6.5): leer la ficha completa del vino desde PostgreSQL.
-    return detalle_vino_example(cod)
+def obtener_vino(cod: int, request: Request) -> VinoDetalle:
+    """Return the full wine card (composition, pairings, stock) or 404."""
+    ficha = repo_vinos.obtener_vino(request.app.state.pool, cod)
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {"codigo": "NOT_FOUND", "mensaje": f"No existe el vino {cod}.", "detalle": None, "regla": None},
+        )
+    return VinoDetalle.model_validate(ficha)
 
 
 @router.put(
