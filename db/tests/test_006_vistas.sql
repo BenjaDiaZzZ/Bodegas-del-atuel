@@ -22,8 +22,9 @@
 --     claro en lugar de violaciones de UNIQUE confusas.
 --
 -- Estado esperado con 001 → 007 aplicadas: todas las aserciones pasan. No hay
--- divergencia entre las vistas y las funciones contratadas; A1–A5 son prueba de
--- regresión de esa compatibilidad (ver 006_vistas.sql, encabezado).
+-- divergencia entre las vistas y las funciones contratadas; A0–A6 son prueba de
+-- regresión de esa compatibilidad (ver 006_vistas.sql, encabezado). A6 además
+-- cubre R-015: el bucket mensual no depende del TimeZone de la sesión.
 --
 -- Mensajes de error: identifican la vista y el valor observado.
 -- =============================================================================
@@ -76,9 +77,39 @@ INSERT INTO sala (id_sala, direccion, dia_cierre_semanal, id_localidad)
 VALUES (9001, 'Sala Norte Test 006', 2, 9001),
        (9002, 'Sala Sur Test 006', 3, 9001);
 
--- Cliente socio: fn_descuento_cliente('socio') = 10.00 (RN-06).
-INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta, descuento)
-VALUES (9001, 'Cliente Test 006', 'socio', 'DNI', '90000001', 'Calle Cliente 006', 9001, DATE '2020-01-01', 10.00);
+-- Cliente socio: descuento es GENERATED ALWAYS AS (fn_descuento_cliente(tipo))
+-- STORED, así que NO se incluye en el INSERT: la base lo calcula. Para
+-- 'socio' el valor esperado es 10.00 (RN-06); se verifica abajo.
+INSERT INTO cliente (id_cliente, nombre, tipo, tipo_documento, nro_documento, direccion, id_localidad, fecha_alta)
+VALUES (9001, 'Cliente Test 006', 'socio', 'DNI', '90000001', 'Calle Cliente 006', 9001, DATE '2020-01-01');
+
+-- A0. La columna generada descuento coincide con fn_descuento_cliente(tipo)
+--     y con el literal independiente 10.00 del cliente socio sembrado.
+DO $$
+DECLARE
+    v_desc numeric(5,2);
+    v_fn   numeric(5,2);
+BEGIN
+    SELECT c.descuento, fn_descuento_cliente(c.tipo)
+      INTO v_desc, v_fn
+      FROM cliente AS c
+     WHERE c.id_cliente = 9001;
+
+    IF v_desc IS NULL THEN
+        RAISE EXCEPTION 'cliente 9001 no tiene descuento generado';
+    END IF;
+
+    IF v_desc IS DISTINCT FROM v_fn THEN
+        RAISE EXCEPTION 'descuento generado (%) difiere de fn_descuento_cliente(tipo) (%)',
+            v_desc, v_fn;
+    END IF;
+
+    IF v_desc <> 10.00 THEN
+        RAISE EXCEPTION 'cliente socio: descuento generado = %, esperado 10.00', v_desc;
+    END IF;
+
+    RAISE NOTICE 'OK A0: cliente.descuento es GENERATED y coincide con fn_descuento_cliente(tipo)';
+END $$;
 
 -- cod_vino es GENERATED ALWAYS: se referencia por nombre en el resto del script.
 INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)
@@ -438,7 +469,7 @@ BEGIN
       FROM vw_documentos_pendientes
      WHERE tipo_documento = 'ingreso' AND numero = 9001;
 
-    IF v_ref <> 'Bodega Test 006' OR v_sala IS NOT NULL OR v_estado <> 'en_confeccion' THEN
+    IF v_ref IS DISTINCT FROM 'Bodega Test 006' OR v_sala IS NOT NULL OR v_estado IS DISTINCT FROM 'en_confeccion' THEN
         RAISE EXCEPTION 'Ingreso 9001: referencia=%, id_sala=%, estado=%',
             v_ref, v_sala, v_estado;
     END IF;
@@ -448,7 +479,7 @@ BEGIN
       FROM vw_documentos_pendientes
      WHERE tipo_documento = 'transferencia' AND numero = 9001;
 
-    IF v_ref <> 'Localidad Test 006' OR v_sala <> 9001 OR v_estado <> 'en_confeccion' THEN
+    IF v_ref IS DISTINCT FROM 'Localidad Test 006' OR v_sala IS DISTINCT FROM 9001 OR v_estado IS DISTINCT FROM 'en_confeccion' THEN
         RAISE EXCEPTION 'Transferencia 9001: referencia=%, id_sala=%, estado=%',
             v_ref, v_sala, v_estado;
     END IF;
@@ -542,6 +573,108 @@ BEGIN
     END IF;
 
     RAISE NOTICE 'OK A5: vw_ficha_vino es coherente con vw_stock_total_vino y con RN-05';
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- A6. vw_ventas_mensuales_sala: el bucket mensual es independiente del
+--     TimeZone de la sesión (R-015) y su contrato de columnas no cambió.
+--     Los comprobantes 9001 (marzo) y 9002 (abril) son el fixture de dos
+--     meses distintos ya sembrado por el camino normal de escritura.
+--     La vista usa date_trunc('month', v.fecha::timestamp)::date; sin el
+--     cast explícito, PostgreSQL resolvería date_trunc con timestamptz según
+--     el huso de la sesión (latente, aunque el truncado al mes es estable).
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+    c_zonas   text[] := ARRAY[
+        'America/Argentina/Buenos_Aires',
+        'Pacific/Kiritimati',
+        'America/Santiago'];
+    v_prev    text := current_setting('TimeZone');
+    v_zona    text;
+    v_ref     text;
+    v_obs     text;
+    v_meses   date[];
+    v_columnas text[];
+    v_esperadas text[] := ARRAY[
+        'id_sala:integer',
+        'id_localidad:integer',
+        'localidad:character varying',
+        'mes:date',
+        'botellas_vendidas:numeric',
+        'monto_total:numeric',
+        'comprobantes:bigint'];
+    v_dia     integer;
+BEGIN
+    -- Contrato de columnas, orden y tipos: la API depende de él.
+    SELECT array_agg(column_name || ':' || data_type
+                     ORDER BY ordinal_position)
+      INTO v_columnas
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'vw_ventas_mensuales_sala';
+
+    IF v_columnas IS DISTINCT FROM v_esperadas THEN
+        RAISE EXCEPTION 'Contrato de vw_ventas_mensuales_sala cambiado: % (esperado %)',
+            v_columnas, v_esperadas;
+    END IF;
+
+    -- Ningún mes puede salir con día distinto del 1.
+    FOR v_dia IN
+        SELECT DISTINCT EXTRACT(DAY FROM mes)::integer
+          FROM vw_ventas_mensuales_sala
+         WHERE id_sala = 9001
+    LOOP
+        IF v_dia <> 1 THEN
+            RAISE EXCEPTION 'vw_ventas_mensuales_sala devolvió un mes con día %', v_dia;
+        END IF;
+    END LOOP;
+
+    -- Referencia: filas (mes, monto, botellas, comprobantes) de la sala 9001.
+    PERFORM set_config('TimeZone', c_zonas[1], true);
+
+    SELECT string_agg(
+               mes::text || '|' || monto_total::text || '|' ||
+               botellas_vendidas::text || '|' || comprobantes::text,
+               ',' ORDER BY mes)
+      INTO v_ref
+      FROM vw_ventas_mensuales_sala
+     WHERE id_sala = 9001;
+
+    SELECT array_agg(mes ORDER BY mes)
+      INTO v_meses
+      FROM vw_ventas_mensuales_sala
+     WHERE id_sala = 9001;
+
+    IF v_ref IS NULL THEN
+        RAISE EXCEPTION 'vw_ventas_mensuales_sala no devolvió filas para la sala 9001';
+    END IF;
+
+    IF v_meses IS DISTINCT FROM ARRAY[DATE '2026-03-01', DATE '2026-04-01'] THEN
+        RAISE EXCEPTION 'Meses esperados {2026-03-01, 2026-04-01} y se obtuvo %', v_meses;
+    END IF;
+
+    -- Repetir la consulta en los otros husos; el resultado debe ser idéntico.
+    FOREACH v_zona IN ARRAY c_zonas LOOP
+        PERFORM set_config('TimeZone', v_zona, true);
+
+        SELECT string_agg(
+                   mes::text || '|' || monto_total::text || '|' ||
+                   botellas_vendidas::text || '|' || comprobantes::text,
+                   ',' ORDER BY mes)
+          INTO v_obs
+          FROM vw_ventas_mensuales_sala
+         WHERE id_sala = 9001;
+
+        IF v_obs IS DISTINCT FROM v_ref THEN
+            RAISE EXCEPTION 'TimeZone % alteró el bucket mensual: % vs %',
+                v_zona, v_obs, v_ref;
+        END IF;
+    END LOOP;
+
+    PERFORM set_config('TimeZone', v_prev, true);
+
+    RAISE NOTICE 'OK A6: vw_ventas_mensuales_sala es estable en tres TimeZone y conserva su contrato';
 END $$;
 
 -- -----------------------------------------------------------------------------
