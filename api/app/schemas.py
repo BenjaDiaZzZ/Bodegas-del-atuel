@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 TipoVino = Literal["tinto", "blanco", "rosado", "espumante"]
 TipoCliente = Literal["socio", "distribuidor", "exportador"]
@@ -217,14 +217,14 @@ class ClienteUpdate(BaseModel):
 
 class ComprobanteRenglonCreate(BaseModel):
     cod_vino: int
-    cantidad: int
+    cantidad: int = Field(ge=1)
 
 
 class ComprobanteCreate(BaseModel):
     id_cliente: int
     id_sala: int
     fecha: str | None = None
-    renglones: list[ComprobanteRenglonCreate]
+    renglones: list[ComprobanteRenglonCreate] = Field(min_length=1)
 
 
 class TransferenciaCreate(BaseModel):

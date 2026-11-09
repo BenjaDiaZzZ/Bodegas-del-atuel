@@ -803,12 +803,13 @@ passed`** (153 base + 8 nuevos − 2 filas de stub retiradas).
 
 ### Discrepancias detectadas (no corregidas, fuera de alcance)
 
-- `api/app/schemas.py` `ComprobanteCreate.renglones` no replica el
-  `minItems: 1` del contrato, ni `ComprobanteRenglonCreate.cantidad` el
-  `minimum: 1`: un cuerpo con `renglones: []` sería aceptado por el esquema
-  (la base crearía un comprobante sin renglones) y una `cantidad: 0` llegaría
-  a la base, que responde 422/`23514` por su CHECK en vez del 400 del
-  contrato. Corrige en `schemas.py` (ge=1 / min_length=1), no en el router.
+- **Corregido post-6.8:** `api/app/schemas.py` `ComprobanteCreate.renglones`
+  no replicaba el `minItems: 1` del contrato, ni
+  `ComprobanteRenglonCreate.cantidad` el `minimum: 1` (un `renglones: []` se
+  aceptaba y una `cantidad: 0` llegaba a la base y respondía 422/`23514` en
+  vez del 400 del contrato). Fidelidad restaurada en `schemas.py`
+  (`Field(min_length=1)` / `Field(ge=1)`) con dos casos nuevos en la prueba
+  de cuerpo inválido (400 `VALIDATION_ERROR` para ambos).
 - El POST ya documenta los status 400/409/422 del manejo central, así que no
   hace falta tocarlo; una próxima revisión del contrato podría agregar una
   nota para el caso particular de `cod_vino` inexistente (responde 409 con

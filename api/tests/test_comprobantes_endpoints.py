@@ -427,8 +427,16 @@ def test_crear_comprobante_cuerpo_invalido_400_validation_error(client):
         "/comprobantes",
         json={"id_cliente": 1, "id_sala": 1},
     )
+    lista_vacia = client.post(
+        "/comprobantes",
+        json={"id_cliente": 1, "id_sala": 1, "renglones": []},
+    )
+    cantidad_cero = client.post(
+        "/comprobantes",
+        json={"id_cliente": 1, "id_sala": 1, "renglones": [{"cod_vino": 1, "cantidad": 0}]},
+    )
 
-    for response in (faltante, sin_renglones):
+    for response in (faltante, sin_renglones, lista_vacia, cantidad_cero):
         assert response.status_code == 400, response.text
         body = response.json()
         assert set(body) == ERROR_KEYS
