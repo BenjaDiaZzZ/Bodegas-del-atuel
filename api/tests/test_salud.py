@@ -1,0 +1,48 @@
+from datetime import datetime
+
+import pytest
+from fastapi.testclient import TestClient
+
+import app.main as main
+from app.config import Settings
+from app.db import create_pool
+
+
+@pytest.fixture
+def client():
+    with TestClient(main.create_app()) as test_client:
+        yield test_client
+
+
+def test_salud_returns_documented_shape(client):
+    response = client.get("/salud")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"status", "db", "version", "timestamp"}
+    assert body["status"] == "ok"
+    assert body["db"] is True
+    assert body["version"].startswith("PostgreSQL ")
+    datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
+
+
+def test_salud_returns_503_when_database_is_unreachable(monkeypatch):
+    def unreachable_pool(settings):
+        return create_pool(settings, timeout=0.5)
+
+    monkeypatch.setattr(main, "create_pool", unreachable_pool)
+    settings = Settings(
+        host="127.0.0.1",
+        port=1,
+        dbname="bodegas_del_atuel",
+        user="app_rw",
+        password="not-a-real-password",
+    )
+
+    with TestClient(main.create_app(settings)) as test_client:
+        response = test_client.get("/salud")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert {"codigo", "mensaje"} <= set(body)
+    assert "password" not in response.text.lower()

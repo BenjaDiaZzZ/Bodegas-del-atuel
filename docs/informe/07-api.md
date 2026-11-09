@@ -75,3 +75,66 @@ mezclar cambios de alcance.
 - Las dependencias condicionales de `ClienteCreate` (campos propios de
   `distribuidor`/`exportador`) también se documentan; la base las exige en los
   subtipos.
+
+## Tarea B — Esqueleto FastAPI (plan 6.1)
+
+### Alcance
+
+Estructura inicial de la API en `api/` con FastAPI + psycopg 3 + `psycopg_pool`,
+SQL puro y parametrizado (sin ORM ni query builders), conexión exclusivamente
+con el rol `app_rw` mediante variables de entorno, y `GET /salud` ejecutando un
+`SELECT 1` real contra PostgreSQL.
+
+| Archivo | Rol |
+|---|---|
+| `api/app/main.py` | App de FastAPI (factory `create_app`), registro de routers y ciclo de vida del pool |
+| `api/app/config.py` | Settings desde variables de entorno (dataclass, sin dependencias nuevas) |
+| `api/app/db.py` | Pool `psycopg_pool.ConnectionPool` y helper de conexión |
+| `api/app/repos/salud.py` | Única consulta del esqueleto: `SELECT 1` (una función por consulta) |
+| `api/app/routers/salud.py` | `GET /salud` con respuesta `Salud` de OpenAPI |
+| `api/tests/test_salud.py`, `test_db.py` | Pruebas del endpoint y de conectividad |
+| `api/requirements.txt` | Dependencias pinneadas (runtime y dev-test) |
+| `api/pytest.ini` | Config para correr `python -m pytest api/tests` desde la raíz |
+
+### Variables de entorno
+
+| Variable | Default | Requerida | Uso |
+|---|---|---|---|
+| `POSTGRES_HOST` | `localhost` | no | Host de PostgreSQL |
+| `POSTGRES_PORT` | `5432` | no | Puerto |
+| `POSTGRES_DB` | — | sí | Base de datos |
+| `DB_USER` | `app_rw` | no | Rol de aplicación (nunca el propietario) |
+| `DB_PASSWORD` | — | sí | Contraseña de `app_rw` (misma variable que usa `scripts/set_role_passwords.sh`) |
+
+`.env.example` está fuera del alcance autorizado de esta entrega, por lo que no
+se editó. **Propuesta de incorporación** (para quien tenga el archivo a cargo):
+
+```dotenv
+# Host de PostgreSQL para la API (default: localhost).
+POSTGRES_HOST=localhost
+# Rol de aplicación de privilegios limitados que usa la API (default: app_rw).
+DB_USER=app_rw
+```
+
+### Decisiones
+
+- `/salud` responde el shape `Salud` documentado en OpenAPI
+  (`status`, `db`, `version`, `timestamp`) con datos reales de la conexión; la
+  versión la informa el propio servidor PostgreSQL.
+- Si la base no está disponible, responde `503` con el schema `Error`
+  (`codigo: DB_UNAVAILABLE`) sin filtrar credenciales ni detalles internos.
+- El SQL vive solo en `repos/`; los routers no contienen consultas (adelanta la
+  separación que pide la tarea 6.3).
+- El pool se abre/cierra con el ciclo de vida de la aplicación; la fábrica
+  `create_app(settings)` permite inyectar configuración en las pruebas.
+
+### Pruebas (TDD)
+
+- **RED**: `pytest api/tests` → 2 errores de colección (`ModuleNotFoundError: No
+  module named 'app'`), la aplicación aún no existía.
+- **GREEN**: `6 passed` sobre PostgreSQL 16 efímero (migraciones 001–007
+  aplicadas sin modificarlas, conexión como `app_rw`).
+- **Smoke en vivo**: `uvicorn app.main:app --app-dir api` + `curl /salud` →
+  `HTTP/1.1 200 OK` con `{"status":"ok","db":true,"version":"PostgreSQL 16.15",...}`.
+- Cobertura de los negativos: `POSTGRES_DB` faltante (falla rápido al arrancar)
+  y base inaccesible (`503` sin contraseña en la respuesta).
