@@ -385,6 +385,255 @@ observó el RED de cada corrección antes de implementarla (los dos tests de
 R3-001 documentan comportamiento ya correcto y funcionan como guardia de
 regresión).
 
+## Tarea 6.3 — Capa de repositorios
+
+### Alcance
+
+Módulo `api/app/repos/` con **una función por operación de acceso a datos**,
+cada una con su SQL parametrizado y sus transacciones explícitas. Es la capa
+que las tareas 6.5–6.10 van a consumir: los routers quedan como estaban
+(stubs) y **no contienen SQL ni lógica de persistencia** (verificado por
+grep). No se implementó lógica de endpoints ni reglas de negocio de fases
+posteriores.
+
+### Arquitectura y convenciones
+
+| Decisión | Criterio |
+|---|---|
+| Firma | `def f(pool: ConnectionPool, ...) -> ...`; cada función **es dueña de su conexión** (`get_connection` para lecturas, `transaction` para escrituras u operaciones multi-sentencia). Los routers no manejan conexiones. |
+| SQL | Exclusivamente parametrizado (`%s` / `%(x)s`), cero interpolación de valores. El `WHERE` dinámico se arma con fragmentos fijos + parámetros bound (con casts explícitos `%(x)s::text` donde PostgreSQL no infiere el tipo). |
+| IDs | Siempre `RETURNING`; nunca `nextval`/`currval`. |
+| Datos derivados | La API no calcula precios, descuentos, subtotales, totales ni stock: los devuelven los triggers, funciones y vistas. |
+| Resultados | `dict_row` (psycopg), tipos nativos de la base; el mapeo a Pydantic es trabajo de los routers (6.5+). |
+| Filas de comprobante | Solo `(cod_vino, cantidad)`, insertadas **ordenadas por `cod_vino ASC`** (regla del proyecto y orden de locks de 004). |
+| Auditoría de precio | `actualizar_vino` ejecuta `set_config('app.usuario', %s, true)` **como primera sentencia de la transacción** (ámbito transaccional, patrón de `consultas/update.sql` U3); el trigger `fn_tg_vino_precio_auditoria` (SECURITY DEFINER) lo lee solo si cambia `precio_venta`. |
+
+### Inventario de funciones (25 públicas)
+
+| Módulo | Funciones |
+|---|---|
+| `repos/vinos.py` | `listar_vinos` (filtros + paginación, `COUNT(*) OVER ()` en una sola query), `obtener_vino`, `crear_vino` (vino + composición + maridajes en **una** transacción; RN-05 diferido → 409), `actualizar_vino` (con `set_config`), `eliminar_vino` |
+| `repos/clientes.py` | `listar_clientes`, `obtener_cliente` (con subtipo y permisos), `crear_cliente` (cliente + subtipo + permisos en una transacción; nunca envía `id_cliente` ni `descuento`), `actualizar_cliente` (sin cambiar `tipo`), `eliminar_cliente` |
+| `repos/comprobantes.py` | `crear_comprobante` (cabecera + renglones en una transacción, patrón I3: los triggers calculan todo), `obtener_comprobante` |
+| `repos/transferencias.py` | `crear_transferencia`, `agregar_renglon_transferencia`, `terminar_transferencia`, `procesar_transferencia` (`CALL sp_procesar_transferencia`) |
+| `repos/ingresos.py` | ídem con `sp_procesar_ingreso` (`[RN-10]`) |
+| `repos/reportes.py` | `top_vinos` (S1), `ventas_por_sala` (S8 sobre `vw_ventas_mensuales_sala`), `vinos_sin_stock` (S6), `transportista_activo` (S7), `trazabilidad_vino` (S9 sobre `vw_ficha_vino`) |
+
+Los reportes **alinearon su semántica con las consultas canónicas de
+`consultas/select.sql`** (S1/S6/S7/S8), no con los rótulos del contrato.
+
+### Decisiones y hallazgos
+
+- `obtener_vino` y `trazabilidad_vino` usan `vw_ficha_vino`: una sola query
+  devuelve ficha + stock + composición/maridajes como JSONB, que psycopg
+  convierte a listas de dicts.
+- Los `DELETE` no borran hijos a mano: verificado en 001 que `composicion` y
+  `vino_maridaje` son `CASCADE` (y la cascada corre con los privilegios del
+  owner). Las FK `RESTRICT` (renglones de comprobante, stock, auditoría) se
+  dejan propagar como error mapeado — sin workarounds.
+- **Incompatibilidad de comportamiento hallada (documentada, sin improvisar):**
+  repetir `terminar` sobre un documento ya `terminado` **no** produce error:
+  un `UPDATE` que no cambia el valor de `estado` no dispara la validación de
+  transiciones del trigger, así que es un no-op de la base. El único retroceso
+  que sí responde es `procesado → terminado` (`[RN-11]`/`[RN-10]` → 409). Los
+  tests afirman el comportamiento real de la base, no el imaginado.
+- Los permisos se respetan al pie de la letra: las pruebas corren con el pool
+  **`app_rw`** y solo los catálogos/stock de fixture se crean como superusuario.
+  Hay tests explícitos de frontera (INSERT directo en `bodega` → `42501`;
+  UPDATE sobre `renglon_comprobante` → `42501`) que prueban que los repos no
+  dependen de privilegios de superusuario.
+
+### Pruebas (TDD, integración contra PostgreSQL 16)
+
+- **RED** observado por ciclo (los módulos aún no existían: `ImportError` en la
+  colección) y luego **GREEN**.
+- **Suite completa: `109 passed`** = 63 previas + **46 nuevas** de repositorio
+  (26 de vinos/clientes + 20 de comprobantes/documentos/reportes).
+- Cobertura mínima verificada: happy path por función; filtros y paginación;
+  **prueba de parametrización** (`'; DROP TABLE vino; --` como valor → sin
+  efecto, tabla intacta); **atomicidad transaccional** (RN-05 diferido → 409 y
+  nada persiste; RN-09 sin stock → 409 y nada persiste; duplicado → 409/23505);
+  flujo completo crear→renglón→terminar→procesar con efectos reales sobre el
+  stock; transiciones inválidas → 409 con `regla` RN-10/RN-11; inexistentes →
+  404 (`P0002`); reportes con dataset conocido (orden S1, filtro S6, ganador
+  S7, filas S8); fronteras de permiso (`42501`).
+
+### Queda pendiente para 6.5–6.10
+
+- Conectar los routers a estos repos (una operación OpenAPI → una función de
+  repo), construir los `PageMeta` en la capa HTTP, mapear dicts a los modelos
+  Pydantic y traducir `None` a 404 donde corresponda.
+- Filtros/paginación de `GET /vinos` y `GET /clientes` ya soportados por los
+  repos; falta exponerlos.
+- El `TODO(6.x)` de cada stub marca qué endpoint implementa cada uno.
+
+## Tarea 6.5 — Catálogo de vinos (`GET /vinos`, `GET /vinos/{cod}`)
+
+### Alcance
+
+Primeros endpoints reales de la API: los dos GET del catálogo quedan
+conectados a `repos/vinos.py` (`listar_vinos` y `obtener_vino`), con
+conversión a los modelos Pydantic del contrato, `PageMeta` correcto y 404 con
+el body `Error`. Los `POST`/`PUT`/`DELETE` de `/vinos` siguen siendo stubs con
+su `TODO(6.6)`.
+
+### Decisiones
+
+- **Composición de la respuesta**: el router delega todo el acceso a datos en
+  el repo (recibe `request.app.state.pool`, patrón de `salud`), convierte las
+  filas con `VinoResumen.model_validate` / `VinoDetalle.model_validate` y arma
+  `PageMeta(page, per_page, total, total_pages)` con
+  `total_pages = (total + per_page - 1) // per_page` (0 cuando `total = 0`).
+- **Orden**: el contrato **no define parámetros de ordenamiento** para estas
+  operaciones (verificado en `openapi.yaml`); se mantiene el orden
+  determinístico del repo (`cod_vino`). No se inventó ningún parámetro.
+- **Fidelidad del contrato en los parámetros**: los stubs declaraban `tipo`
+  como string libre y `cuit_bodega` sin patrón; ahora `tipo` es el enum y
+  `cuit_bodega` valida `^[0-9]{11}$`, como documenta OpenAPI.
+- **404**: `DatabaseHttpError(404, {"codigo": "NOT_FOUND", "mensaje": "No
+  existe el vino <cod>.", ...})` → el renderizador central emite el body
+  `Error` del contrato (sin fugas del formato `{"detail": ...}` de FastAPI).
+  Los errores de base siguen fluyendo por los handlers centralizados intactos.
+
+### Pruebas (integración HTTP contra PostgreSQL 16)
+
+`api/tests/test_vinos_endpoints.py` — 13 pruebas con datos controlados
+(marcadores únicos por corrida; catálogos vía superusuario, todo lo demás por
+los repos como `app_rw`): shape 200 de la página con `meta` exacto; cada filtro
+por separado y combinados; paginación con `per_page=2` (páginas disjuntas,
+`total` completo, `total_pages` correcto); página fuera de rango → `data: []`;
+filtro sin resultados → `total 0`; detalle 200 con `composicion`/`maridajes`/
+`stock`; inexistente → 404 con body `Error`. **RED conductual** observado
+primero (el stub devolvía el ejemplo hardcodeado sin importar los filtros) y
+luego GREEN. **Suite completa: `120 passed`.**
+
+### Ajuste de la matriz de stubs (decisión documentada)
+
+La matriz de 6.2 (`test_stubs.py`) fijaba el comportamiento de stub de las dos
+rutas que ahora son reales y quedó en conflicto estructural (esperaba 200 con
+payload fijo contra un pool dummy). Se retiraron **solo esas dos filas** con un
+comentario: su cobertura real vive en `test_vinos_endpoints.py`. Las filas de
+`POST`/`PUT`/`DELETE /vinos` permanecen (siguen siendo stubs). **Regla para
+6.6–6.10**: a medida que cada endpoint se vuelva real, se retira su fila de la
+matriz y la cobertura pasa a su archivo de pruebas dedicado.
+
+### Incompatibilidad pendiente de decisión (resuelta)
+
+FastAPI respondía **422** `{"detail": [...]}` ante parámetros de query
+inválidos mientras el contrato documenta **400** con body `Error`. Quedó
+**resuelta** por decisión explícita en la sección «Validación HTTP alineada
+con el contrato» de abajo; el comportamiento anterior estuvo pinneado en una
+prueba hasta el cambio.
+
+## Validación HTTP alineada con el contrato (post-6.5)
+
+### Objetivo
+
+Los errores de validación de FastAPI (query, path y body) responden **HTTP
+400** con el body `Error` del contrato, en lugar del `422 {"detail": ...}`
+predeterminado. El **422 del contrato se reserva** para violaciones
+semánticas de la base (CHECK `23514`, NOT NULL `23502`), que siguen llegando
+desde el mapeo SQLSTATE — sin cambios.
+
+### Implementación
+
+- `api/app/main.py`: un handler global para `RequestValidationError`
+  registrado junto a los existentes. Construye un `ErrorBody` reutilizando la
+  clase central (`errors.py` intacto) y lo pinta con **el mismo renderizador**
+  `_error_response` que usan los otros errores: un solo camino de formato.
+- Body resultante: `codigo: "VALIDATION_ERROR"` (código interno, estilo
+  `DB_UNAVAILABLE`/`NOT_FOUND`), `mensaje: "La solicitud es inválida."`
+  (genérico, nunca un dump del framework), `detalle: "<ubicación>: <mensaje
+  genérico de Pydantic>"` (ej. `query.cuit_bodega: String should match
+  pattern…`), `regla: null`.
+- **Regla de seguridad**: solo se leen `loc` (ubicación) y `msg` (mensaje
+  genérico del validador). Nunca se devuelven los valores del input, `ctx`,
+  tipos de excepción, trazas, SQL ni detalles internos. La lista se limita a
+  5 ítems (`…` si se trunca).
+- Uniforme para los tres orígenes: un único `RequestValidationError` cubre
+  query, path y body (FastAPI valida antes de ejecutar el handler de la ruta).
+
+### Pruebas
+
+`api/tests/test_validation_errors.py` (7 pruebas): query inválido → 400 con
+body `Error` y `query.cuit_bodega` en `detalle`; path inválido (`/vinos/abc`)
+→ 400 con `path.cod` (el nombre del parámetro de la ruta); body inválido en
+`POST /vinos` (la validación ocurre antes del stub — no se implementó 6.6);
+**prueba de no-fuga** (un valor marcador enviado por query no aparece en la
+respuesta); paginación fuera de rango (`page=0`) → 400 (mencionado en la
+descripción de `BadRequest` del contrato); y uniformidad de `codigo`/`mensaje`
+entre los tres orígenes. La prueba de 6.5 que fijaba el 422 pasó a
+`test_invalid_query_param_returns_400_with_error_body` (400 + body `Error`).
+
+**Suite completa: `127 passed`** sobre PostgreSQL 16 (001–008, `app_rw`); los
+23 tests de SQLSTATE/`DatabaseHttpError` confirman que el manejo central
+existente quedó intacto.
+
+## Tarea 6.6 — Alta, modificación y baja de vinos (POST/PUT/DELETE)
+
+### Alcance
+
+Los tres handlers de escritura de `/vinos` dejaron de ser stubs y se conectan
+a los repositorios de 6.3. El CRUD de vinos queda completo: GET (6.5) + POST,
+PUT y DELETE (6.6). `api/tests/test_stubs.py` perdió las 3 filas de su matriz
+(siguiendo el patrón acordado) y la cobertura vive en
+`api/tests/test_vinos_endpoints.py`.
+
+### Decisiones
+
+- **POST** → `repo.crear_vino(...)`: 201 con `VinoDetalle`. Todos los errores
+  fluyen por el manejo central: RN-05 (composición ≠ 100, diferido al COMMIT)
+  → 409 con `regla: RN-05`; clave de negocio duplicada → 409/`23505`; CHECK o
+  NOT NULL de la base → 422; padre FK inexistente → 422; validación de
+  request → 400. Cero mapeo de errores en el router.
+- **PUT** → actualización parcial real: solo se envían al repo los campos que
+  el cliente mandó (`body.model_dump(exclude_unset=True)`), con `composicion`
+  y `maridajes` como colecciones completas (reemplazo atómico dentro de la
+  transacción del repo). Inexistente → 404 con body `Error`.
+- **DELETE** → 204 sin cuerpo; inexistente → 404; con movimientos asociados →
+  409 vía el handler central (FK `ON DELETE RESTRICT`, la RN-14 del contrato).
+
+### Usuario de la auditoría (hallazgo abierto — decisión pendiente)
+
+Ninguna fuente define de dónde sale el identificador que audita los cambios
+de precio: `openapi.yaml` no tiene header ni campo, `docs/contratos.md` solo
+documenta el mecanismo (`SET LOCAL app.usuario = ...` con ejemplo
+`'admin@bodega.com'`), el enunciado exige el campo `usuario` en la auditoría y
+el front está vacío. **No se inventó superficie de contrato**: el router pasa
+`usuario=""`, que activa el fallback documentado en la base.
+
+Verificación empírica del fallback (sonda real contra PostgreSQL 16):
+`set_config('app.usuario', '', true)` + UPDATE como `app_rw` → la fila en
+`auditoria_precio` queda con `usuario = 'app_rw'`. El trigger usa
+`session_user` (005:483), que bajo `SECURITY DEFINER` sigue siendo el rol de
+conexión — **no** el dueño de la función. Ojo de defensa: `docs/contratos.md:105`
+dice que el fallback es `current_user`, pero el SQL usa `session_user`; el
+comportamiento real (empírico) es el segundo y el test lo fija (`usuario ==
+'app_rw'`).
+
+Queda como decisión abierta (ver «Requiere coordinación»): si la identidad la
+manda el cliente (header tipo `X-Usuario` o campo en `VinoUpdate`, ambos
+cambios de contrato) o si la auditoría se conforma con el rol de aplicación
+hasta que exista autenticación.
+
+### Pruebas (12 nuevas, integración HTTP contra PostgreSQL 16)
+
+Creación con composición de 2 cepas (201, shape `VinoDetalle`); composición
+≠ 100 → 409 `P0001`/`RN-05` **y atomicidad** (el vino no queda); duplicado de
+clave de negocio → 409/`23505`; CHECK violado → 422 con body `Error` (y la
+prueba complementaria de validación de request → 400); PUT de atributos →
+200; reemplazo de composición → 200 y el caso atómico (composición inválida →
+409 con la composición anterior intacta); **PUT de precio → 200 + fila en
+`auditoria_precio`** con `precio_anterior`/`precio_nuevo` y `usuario = 'app_rw'`
+(valor empírico fijado en la prueba); PUT inexistente → 404; DELETE → 204 y el
+GET posterior → 404; **DELETE con movimientos → 409** (la FK de
+`auditoria_precio` es `ON DELETE RESTRICT`, el motor más simple de la RN-14)
+con el vino intacto; DELETE inexistente → 404. RED observado primero.
+**Suite completa: `136 passed`.**
+
+Nota: `detalle_vino_example` en `routers/vinos.py` **no** es código muerto: lo
+importa el stub de reportes (6.10 lo reemplazará junto con los `_EXAMPLE_*`).
+
 ### Requiere coordinación
 
 - **P1**: nada bloqueante. D5 funciona sin excepción de RN-12 (evidencia
@@ -410,3 +659,87 @@ regresión).
   PostgreSQL (fallback documentado para servidores localizados).
 - `git`, el informe y las pruebas se ejecutaron en este entorno; no se hizo
   push, PR ni merge por decisión explícita.
+
+## Tarea 6.7 — CRUD de clientes
+
+### Alcance
+
+Las cinco operaciones de `/clientes` dejaron de ser stubs y se conectan a
+`repos/clientes.py` (6.3). El CRUD queda completo: listado con filtros y
+paginación, detalle, alta con subtipo y permisos, modificación parcial y baja.
+`api/tests/test_stubs.py` perdió sus 5 filas de `/clientes` (mismo patrón que
+6.5/6.6) y la cobertura vive en `api/tests/test_clientes_endpoints.py`.
+
+### Decisiones
+
+- **GET `/clientes`** → `repo.listar_clientes(...)`: `ClienteResumen` por fila y
+  `PageMeta` con `total_pages = (total + per_page - 1) // per_page` (0 cuando
+  `total = 0`). `tipo` se valida con el alias `TipoCliente` del contrato
+  (`Literal`); un subtipo desconocido responde 400 `VALIDATION_ERROR` por el
+  handler central, no 422.
+- **GET `/clientes/{id}`** → `repo.obtener_cliente(...)`; `None` → 404 con body
+  `Error` (`NOT_FOUND`), igual que el patrón de vinos. El detalle expone los
+  campos del subtipo (`zona_cobertura`/`nro_habilitacion` para distribuidor,
+  `pais_destino_principal` para exportador) y `permisos` ordenados por
+  `cod_permiso`; los campos de otros subtipos quedan en `null`.
+- **POST `/clientes`** → `repo.crear_cliente(...)`: 201 con `ClienteDetalle`.
+  Nunca se envían `descuento` (GENERATED ALWAYS desde `fn_descuento_cliente`,
+  R-002) ni `id_cliente` (identity). La base asigna 10/20/30 % según el tipo y
+  lo verifica la prueba. Subtipo y permisos se insertan en la misma transacción
+  del repo. Errores por el manejo central: duplicado de documento → 409/`23505`;
+  CHECK de la base (p. ej. `ck_permiso_fechas`) → 422/`23514`; FK padre
+  inexistente → 422; validación de request → 400.
+- **PUT `/clientes/{id}`** → actualización parcial real con
+  `body.model_dump(exclude_unset=True)`. `ClienteUpdate` **no** tiene `tipo`:
+  cambiarlo queda fuera del contrato (y la FK compuesta de los subtipos lo
+  impide en la base). Si viaja `permisos`, el repo reemplaza la colección
+  completa dentro de su transacción. Inexistente → 404.
+- **DELETE `/clientes/{id}`** → 204 sin cuerpo; inexistente → 404; cliente con
+  comprobantes → 409/`23503` por la FK `ON DELETE RESTRICT`, sin rodearla. Los
+  subtipos y permisos caen por CASCADE.
+- **Serialización de fechas**: el repo devuelve valores nativos (`date`) y los
+  esquemas Pydantic del contrato modelan las fechas como `str`. El router las
+  normaliza a ISO (`_fecha_iso`) antes de `model_validate`; es adaptación de
+  respuesta, no lógica de negocio ni SQL.
+
+### Pruebas (22 nuevas, integración HTTP contra PostgreSQL 16)
+
+Listado con shape exacto y `PageMeta`; filtros `tipo`, `id_localidad` y `q` por
+separado y combinados; paginación en páginas disjuntas, página fuera de rango
+(`data: []` con meta consistente) y filtro sin coincidencias (`total = 0`,
+`total_pages = 0`); detalle de exportador (subtipo + permiso) y de socio (sin
+datos de otro subtipo); 404 de detalle; 400 por `tipo` inválido; alta de los tres
+tipos (socio 10 %, distribuidor 20 %, exportador 30 %) con roundtrip GET;
+`descuento`/`id_cliente` enviados en el POST se ignoran (la base calcula el
+descuento); documento duplicado → 409/`23505`; CHECK de permiso invertido →
+422/`23514` **y atomicidad** (el cliente no queda); PUT parcial (solo
+`direccion`) con `tipo` ignorado y el resto intacto; PUT inexistente → 404;
+DELETE → 204 y GET posterior → 404; DELETE inexistente → 404; **DELETE con
+comprobante → 409** con el cliente intacto. RED observado primero (21 fallos
+contra los stubs). **Suite completa: `153 passed`.**
+
+### Discrepancia detectada (no corregida, fuera de alcance)
+
+`api/openapi.yaml` describe el filtro `q` como «búsqueda parcial por nombre o
+documento», pero `repos/clientes.py` solo aplica `c.nombre ILIKE`. Las pruebas
+fijan el comportamiento real (nombre); alinear documento requiere tocar el repo
+(6.3) y no el contrato. Queda para coordinación con P1/P2 o una corrección
+posterior del repo.
+
+### Requiere coordinación
+
+- **P2/P1**: decidir si `q` debe buscar también `nro_documento` (discrepancia
+  anterior); hoy el contrato promete más de lo que el repo hace.
+- **P4**: las 5 operaciones de `/clientes` ya responden contra la base real; el
+  front puede integrarlas con los mismos paths/status de OpenAPI. El resto de
+  los stubs (comprobantes, documentos, reportes) sigue pendiente (6.8–6.10).
+
+### Limitaciones de lo verificado
+
+- La base de verificación es el contenedor efímero con migraciones 001–008 y
+  fixtures mínimos creados como superusuario en las pruebas; no es el dataset
+  completo de seeds.
+- La normalización de fechas vive en el router porque los esquemas del
+  contrato las declaran `str`; si se migraran a `date`, ese helper se podría
+  retirar.
+- No se hizo commit, push ni PR por decisión explícita de la tarea.
