@@ -5,34 +5,35 @@
 -- =============================================================================
 
 -- 1. Conteo por tabla
-SELECT 'localidad' AS tabla, count(*) AS filas FROM localidad
-UNION ALL SELECT 'cepa', count(*) FROM cepa
-UNION ALL SELECT 'maridaje', count(*) FROM maridaje
-UNION ALL SELECT 'bodega', count(*) FROM bodega
-UNION ALL SELECT 'transportista', count(*) FROM transportista
-UNION ALL SELECT 'finca', count(*) FROM finca
-UNION ALL SELECT 'sala', count(*) FROM sala
-UNION ALL SELECT 'empleado', count(*) FROM empleado
-UNION ALL SELECT 'parcela', count(*) FROM parcela
-UNION ALL SELECT 'vino', count(*) FROM vino
-UNION ALL SELECT 'cliente', count(*) FROM cliente
-UNION ALL SELECT 'lote_uva', count(*) FROM lote_uva
-UNION ALL SELECT 'composicion', count(*) FROM composicion
-UNION ALL SELECT 'vino_maridaje', count(*) FROM vino_maridaje
-UNION ALL SELECT 'socio', count(*) FROM socio
-UNION ALL SELECT 'distribuidor', count(*) FROM distribuidor
-UNION ALL SELECT 'exportador', count(*) FROM exportador
-UNION ALL SELECT 'permiso_exportacion', count(*) FROM permiso_exportacion
-UNION ALL SELECT 'transportista_localidad', count(*) FROM transportista_localidad
-UNION ALL SELECT 'analisis_calidad', count(*) FROM analisis_calidad
-UNION ALL SELECT 'comprobante', count(*) FROM comprobante
-UNION ALL SELECT 'renglon_comprobante', count(*) FROM renglon_comprobante
-UNION ALL SELECT 'ingreso', count(*) FROM ingreso
-UNION ALL SELECT 'renglon_ingreso', count(*) FROM renglon_ingreso
-UNION ALL SELECT 'transferencia', count(*) FROM transferencia
-UNION ALL SELECT 'renglon_transferencia', count(*) FROM renglon_transferencia
-UNION ALL SELECT 'stock_deposito', count(*) FROM stock_deposito
-UNION ALL SELECT 'stock_sala', count(*) FROM stock_sala;
+SELECT 'conteo:localidad' AS tabla, count(*) AS filas FROM localidad
+UNION ALL SELECT 'conteo:cepa', count(*) FROM cepa
+UNION ALL SELECT 'conteo:maridaje', count(*) FROM maridaje
+UNION ALL SELECT 'conteo:bodega', count(*) FROM bodega
+UNION ALL SELECT 'conteo:transportista', count(*) FROM transportista
+UNION ALL SELECT 'conteo:finca', count(*) FROM finca
+UNION ALL SELECT 'conteo:sala', count(*) FROM sala
+UNION ALL SELECT 'conteo:empleado', count(*) FROM empleado
+UNION ALL SELECT 'conteo:parcela', count(*) FROM parcela
+UNION ALL SELECT 'conteo:vino', count(*) FROM vino
+UNION ALL SELECT 'conteo:cliente', count(*) FROM cliente
+UNION ALL SELECT 'conteo:lote_uva', count(*) FROM lote_uva
+UNION ALL SELECT 'conteo:composicion', count(*) FROM composicion
+UNION ALL SELECT 'conteo:vino_maridaje', count(*) FROM vino_maridaje
+UNION ALL SELECT 'conteo:socio', count(*) FROM socio
+UNION ALL SELECT 'conteo:distribuidor', count(*) FROM distribuidor
+UNION ALL SELECT 'conteo:exportador', count(*) FROM exportador
+UNION ALL SELECT 'conteo:permiso_exportacion', count(*) FROM permiso_exportacion
+UNION ALL SELECT 'conteo:transportista_localidad', count(*) FROM transportista_localidad
+UNION ALL SELECT 'conteo:analisis_calidad', count(*) FROM analisis_calidad
+UNION ALL SELECT 'conteo:auditoria_precio', count(*) FROM auditoria_precio
+UNION ALL SELECT 'conteo:comprobante', count(*) FROM comprobante
+UNION ALL SELECT 'conteo:renglon_comprobante', count(*) FROM renglon_comprobante
+UNION ALL SELECT 'conteo:ingreso', count(*) FROM ingreso
+UNION ALL SELECT 'conteo:renglon_ingreso', count(*) FROM renglon_ingreso
+UNION ALL SELECT 'conteo:transferencia', count(*) FROM transferencia
+UNION ALL SELECT 'conteo:renglon_transferencia', count(*) FROM renglon_transferencia
+UNION ALL SELECT 'conteo:stock_deposito', count(*) FROM stock_deposito
+UNION ALL SELECT 'conteo:stock_sala', count(*) FROM stock_sala;
 
 -- 2. Filas huérfanas (FK no resueltas)
 SELECT 'renglon_comprobante sin comprobante' AS control, count(*) AS errores
@@ -97,4 +98,4 @@ SELECT 'estado transferencia inválido', count(*)
   FROM transferencia
  WHERE estado NOT IN ('en_confeccion', 'terminado', 'procesado');
 
--- Resultado: todas las consultas deben devolver 0 errores (salvo la 1, que es informativa).
+-- Resultado: los conteos (prefijo «conteo:») son informativos; los controles 2–6 deben devolver 0 errores.
