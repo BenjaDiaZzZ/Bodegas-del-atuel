@@ -91,8 +91,24 @@ UPDATE transferencia SET estado = 'terminado' WHERE nro_solicitud = $NRO;
 echo "nro_solicitud=$NRO vino_A=$VINO_A"
 
 echo "== sesion C: bloquea stock_deposito del vino A =="
-PGAPPNAME=jd004_C "${PSQL[@]}" -c "BEGIN; SELECT 1 FROM stock_deposito WHERE cod_vino = $VINO_A FOR UPDATE; SELECT pg_sleep(8); ROLLBACK;" >/dev/null 2>&1 &
+PGAPPNAME=jd004_C "${PSQL[@]}" -c "BEGIN; SELECT 1 FROM stock_deposito WHERE cod_vino = $VINO_A FOR UPDATE; SELECT pg_sleep(30); ROLLBACK;" >/dev/null 2>&1 &
 C_PID=$!
+
+# Barrera: esperar a que C ya tenga el lock (esta durmiendo en pg_sleep) antes
+# de lanzar A. Sin esto, en un runner lento A puede terminar antes de que C
+# bloquee y la prueba falla por setup, no por la regla.
+c_ready=0
+for _ in $(seq 1 80); do
+    sleeping=$("${PSQL[@]}" -tAc "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'jd004_C' AND wait_event = 'PgSleep'")
+    if [ "${sleeping:-0}" -gt 0 ]; then c_ready=1; break; fi
+    sleep 0.25
+done
+if [ "$c_ready" -ne 1 ]; then
+    echo "FAIL: la sesion C no llego a tomar el lock; setup no deterministico" >&2
+    kill "$C_PID" 2>/dev/null || true
+    exit 2
+fi
+echo "sesion C bloqueando el deposito"
 
 echo "== sesion A: CALL sp_procesar_transferencia =="
 PGAPPNAME=jd004_A "${PSQL[@]}" -c "CALL sp_procesar_transferencia($NRO);" >/dev/null 2>&1 &
@@ -124,7 +140,8 @@ if [ "$B_RC" -eq 0 ] || ! printf '%s' "$B_ERR" | grep -q '\[RN-12\]'; then
 fi
 echo "RN-12 rechazo la edicion concurrente: OK"
 
-wait "$C_PID"
+kill "$C_PID" 2>/dev/null || true
+wait "$C_PID" 2>/dev/null || true
 wait "$A_PID"
 
 DEP=$("${PSQL[@]}" -tAc "SELECT cantidad FROM stock_deposito WHERE cod_vino = $VINO_A")
