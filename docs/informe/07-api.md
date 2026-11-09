@@ -138,3 +138,54 @@ DB_USER=app_rw
   `HTTP/1.1 200 OK` con `{"status":"ok","db":true,"version":"PostgreSQL 16.15",...}`.
 - Cobertura de los negativos: `POSTGRES_DB` faltante (falla rápido al arrancar)
   y base inaccesible (`503` sin contraseña en la respuesta).
+
+## Tarea C — Stubs de todos los endpoints (plan 6.2)
+
+### Alcance
+
+Las 25 operaciones documentadas en `api/openapi.yaml` quedan respondiendo con
+payloads fijos que respetan sus schemas, para que P4 pueda integrar el front
+sin esperar a la implementación real (6.3–6.10). Cada handler lleva un
+comentario `# TODO(6.x)` con la tarea del plan que lo va a implementar.
+
+| Recurso | Operaciones | TODO | Estado éxito |
+|---|---|---|---|
+| Vinos | GET /vinos, GET /vinos/{cod} | 6.5 | 200 |
+| Vinos | POST /vinos, PUT /vinos/{cod} | 6.6 | 201 / 200 |
+| Vinos | DELETE /vinos/{cod} | 6.6 | 204 |
+| Clientes | GET /clientes, GET /clientes/{id} | 6.7 | 200 |
+| Clientes | POST /clientes, PUT /clientes/{id} | 6.7 | 201 / 200 |
+| Clientes | DELETE /clientes/{id} | 6.7 | 204 |
+| Comprobantes | POST /comprobantes, GET /comprobantes/{nro} | 6.8 | 201 / 200 |
+| Transferencias | POST /transferencias y /{nro}/renglones | 6.9 | 201 |
+| Transferencias | POST /{nro}/terminar, /{nro}/procesar | 6.9 | 200 |
+| Ingresos | POST /ingresos y /{cod}/renglones | 6.9 | 201 |
+| Ingresos | POST /{cod}/terminar, /{cod}/procesar | 6.9 | 200 |
+| Reportes | top-vinos, ventas-por-sala, vinos-sin-stock, transportista-activo, trazabilidad/{cod} | 6.10 | 200 |
+
+### Decisiones
+
+- `api/app/schemas.py` centraliza los modelos Pydantic que espejan los schemas
+  de OpenAPI: FastAPI valida que cada respuesta fija respete el contrato.
+- Los ejemplos de respuesta salen de los `example` del propio OpenAPI; los
+  detalles por id repiten el id del path cuando el schema lo incluye.
+- Los stubs **no** tocan el pool ni escriben SQL (esas tareas son 6.3+): cero
+  lógica de negocio adelantada.
+- `api/tests/test_stubs.py` es un test data-driven que llama a las 26 rutas
+  (25 + `/salud`) y verifica el status documentado y las claves del schema.
+
+### Pruebas
+
+- **RED**: las rutas aún no existían → `25 failed, 1 passed` (ejemplo:
+  `GET /vinos` respondía 404).
+- **GREEN**: `32 passed` (6 previas + 26 de cobertura) sobre PostgreSQL 16
+  efímero.
+- `npx @redocly/cli lint api/openapi.yaml` sin regresiones (exit 0, los mismos
+  2 warnings preexistentes).
+
+### Observaciones sobre el contrato (reportadas, no corregidas)
+
+- El texto informativo de OpenAPI dice «~20 rutas» pero el documento define
+  **25 operaciones**; discrepancia cosmética.
+- `DELETE /vinos/{cod}` documenta `503` pero `DELETE /clientes/{id}` no:
+  inconsistencia menor a alinear cuando se implementen (6.6/6.7).
