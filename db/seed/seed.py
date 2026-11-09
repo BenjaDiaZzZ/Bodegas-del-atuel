@@ -530,6 +530,40 @@ def run_seed(conn, scale_name: str, fecha_base: date, benchmark: bool = False) -
         recalc_totales(cur)
         enable_triggers(cur, trigger_tables)
 
+        # COPY inserts explicit IDs, so synchronize each identity sequence.
+        cur.execute("""
+            DO $$
+            DECLARE
+                item record;
+                max_id bigint;
+                sequence_name text;
+            BEGIN
+                FOR item IN
+                    SELECT * FROM (VALUES
+                        ('analisis_calidad', 'id_analisis'),
+                        ('auditoria_precio', 'id_auditoria'),
+                        ('cepa', 'id_cepa'),
+                        ('cliente', 'id_cliente'),
+                        ('comprobante', 'nro_comprobante'),
+                        ('finca', 'id_finca'),
+                        ('ingreso', 'cod_ingreso'),
+                        ('localidad', 'id_localidad'),
+                        ('maridaje', 'id_maridaje'),
+                        ('sala', 'id_sala'),
+                        ('transferencia', 'nro_solicitud'),
+                        ('transportista', 'id_transportista'),
+                        ('vino', 'cod_vino')
+                    ) AS identities(table_name, column_name)
+                LOOP
+                    EXECUTE format('SELECT MAX(%I) FROM %I', item.column_name, item.table_name)
+                       INTO max_id;
+                    sequence_name := pg_get_serial_sequence(
+                        format('%I.%I', 'public', item.table_name), item.column_name);
+                    PERFORM setval(sequence_name, COALESCE(max_id, 1), max_id IS NOT NULL);
+                END LOOP;
+            END $$;
+        """)
+
         conn.commit()
         print(f"== Seed completo: {scale_name} ==")
 
