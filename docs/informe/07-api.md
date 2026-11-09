@@ -260,3 +260,140 @@ documentado.
 - Fixtures creadas como superusuario (el rol `app_rw` no puede insertar
   `bodega`/`cepa`); el ejercicio de las sentencias corre como `app_rw` y el
   teardown deja los conteos en 0.
+
+## Tarea E — `consultas/delete.sql` (plan 5.3)
+
+### Cambio: D3 filtra por antigüedad con la función
+
+La consigna 5.3 pide filtrar «por antigüedad con la función». D3 usaba
+aritmética de fechas (`fecha_ingreso > CURRENT_DATE - INTERVAL '2 years'`) en
+sus tres sentencias (control previo, DELETE y control posterior) y ahora usa
+`fn_antiguedad_anios(e.fecha_ingreso) < 2`. Es la única modificación del
+archivo: las migraciones no se tocaron para conseguir ningún resultado.
+
+### Prueba real de D5 en PostgreSQL 16 efímero
+
+Fixture construido con el flujo normal de la base (sin saltarse triggers):
+ingreso en `en_confeccion` con `fecha = CURRENT_DATE - 400 días`, un renglón,
+`UPDATE … SET estado = 'terminado'` y `CALL sp_procesar_ingreso(cod)` hasta
+llegar a `procesado` (verificado antes de ejecutar D5).
+
+**Resultado real de `DELETE FROM ingreso WHERE estado = 'procesado' AND fecha <
+CURRENT_DATE - INTERVAL '365 days'`:**
+
+- **`DELETE 1` — el borrado funciona**, sin SQLSTATE ni regla que lo bloquee.
+- El `renglon_ingreso` desapareció por `ON DELETE CASCADE` (verificado: 0
+  renglones después del DELETE, dentro de la misma transacción).
+- **RN-12 no bloquea la cascada**: `tg_renglon_ingreso_biud` salta la
+  validación cuando la cabecera ya no existe (`NOT FOUND → RETURN OLD`,
+  005:422-428) y la cascada se ejecuta después de borrar la cabecera. La nota
+  de integración con P1 que quedaba abierta en el propio archivo y en la guía
+  de estudio **puede cerrarse: no hace falta una excepción de P1 para D5**.
+- La consulta de control posterior devolvió 0.
+
+### Resultado real de D3
+
+- `DELETE 2` (los dos empleados con menos de dos años: −300 y −60 días);
+  el empleado con 1000 días de antigüedad **no** se borró.
+- Sin errores de FK RESTRICT (`fk_empleado_sala` no interviene al borrar
+  empleados); control posterior en 0.
+
+### Pasada completa del archivo (D1–D6)
+
+Ejecución única con cada bloque en su `BEGIN … ROLLBACK` (sin destruir datos):
+los 6 bloques terminaron sin `ERROR`. D2 borró 2 cepas huérfanas; D1, D4 y D6
+devolvieron `DELETE 0` porque el dataset efímero no tiene comprobantes de
+clientes con esa antigüedad; no se observó ninguna FK RESTRICT bloqueando
+borrados en este dataset (la restricción a anotar, si aparece, sería con el
+dataset completo de seeds).
+
+### Limpieza
+
+El fixture se borró al terminar (orden FK-safe) y los 9 controles de conteo
+quedaron en 0, incluido el `stock_deposito` que había generado el
+procedimiento.
+
+## Cierre de la entrega
+
+### Estado de las tareas
+
+| Tarea | Estado | Motivo / evidencia |
+|---|---|---|
+| A — Contrato OpenAPI vs 002 | Hecha | Commit `5d68a96`; lint CI en verde |
+| B — Esqueleto FastAPI (6.1) | Hecha | Commit `6ee1b4e`; `/salud` real contra PG16 |
+| C — Stubs (6.2) | Hecha | Commit `ead7fa3` + `d876a6f`; 25 operaciones cubiertas |
+| D — Errores SQLSTATE (6.4) | Hecha | Commit `2d1e112`; 57 tests, RN-05 probado en COMMIT |
+| E — DELETE (5.3) | Hecha | D3 con `fn_antiguedad_anios`; D5 probado en PG16 real |
+
+### Commits de la rama `feature/p3-api-fase6`
+
+| Commit | Contenido |
+|---|---|
+| `5d68a96` | `fix(api): align OpenAPI contract with 002 CHECK constraints` |
+| `6ee1b4e` | `feat(api): add FastAPI skeleton with real /salud check (6.1)` |
+| `ead7fa3` | `feat(api): stub all OpenAPI routes for front integration (6.2)` |
+| `d876a6f` | `test(api): assert stub item and detail response shapes (review advisories)` |
+| `2d1e112` | `feat(api): central SQLSTATE to HTTP error mapping (6.4)` |
+| (este) | `fix(consultas): D3 filters tenure with fn_antiguedad_anios (5.3)` |
+
+### Pruebas ejecutadas y resultados reales
+
+- `pytest api/tests` → **57 passed** (6 del esqueleto, 26 de stubs, 20 del
+  mapeo de errores sin base, 4 reales contra PostgreSQL 16, 1 de regresión de
+  `/salud`). Última corrida sobre la base efímera con migraciones 001–007 sin
+  modificar.
+- `npx @redocly/cli lint api/openapi.yaml` → exit 0 (2 warnings preexistentes).
+- Smoke en vivo `uvicorn` + `curl /salud` → 200 con `PostgreSQL 16.15`.
+- D3/D5 y pasada D1–D6 sobre PostgreSQL 16 efímero (resultados arriba).
+- Revisiones RDD: 3 candidatos (A+B, C, D) revisados con lente
+  `review-reliability` y **aprobados**; autoridades quemadas. Los hallazgos no
+  bloqueantes quedan listados más abajo.
+
+### Queda pendiente del plan P3
+
+- 6.3 capa de acceso a datos (los `TODO(6.x)` de los stubs), 6.5–6.10
+  implementación real de endpoints, 6.11 suite ampliada (mínimo 8 pruebas con
+  3 que violen reglas — ya hay más de 3, pero el mínimo del plan se cierra con
+  la implementación real), 6.12 demo de inyección SQL, 6.13 Dockerfile y
+  coherencia final OpenAPI/rutas, 9.2 consolidación del informe final.
+- Hallazgos no bloqueantes de las revisiones (trabajo posterior, no reabren
+  los recibos):
+  - R3-02: construcción `app = create_app()` en tiempo de import exige
+    variables de entorno incluso para correr pruebas independientes de la base.
+  - R3-03: `POSTGRES_PORT` no numérico lanza `ValueError` sin nombrar la
+    variable.
+  - R3-3: el fixture de stubs arranca el pool por el lifespan aunque los
+    stubs no tocan la base.
+  - R3-4: `ClienteUpdate` no incluye `tipo` (coincide con el contrato actual;
+    el TODO del stub es adelanto de 6.7).
+  - R3-001: el seam de renderizado de errores de FastAPI no tiene una prueba
+    a nivel de app (los tests cubren `map_db_error` y `transaction`).
+  - R3-002: `RuntimeError` genérico en `/salud` podría enmascarar defectos
+    internos como «base no disponible».
+  - R3-003: el teardown del fixture PG borra por claves fijas.
+
+### Requiere coordinación
+
+- **P1**: nada bloqueante. D5 funciona sin excepción de RN-12 (evidencia
+  arriba); conviene confirmarlo en la defensa y cerrar la nota abierta en
+  `consultas/delete.sql`. Si el dataset completo cambia el comportamiento de
+  D1/D4/D6 (hoy dan 0), habría que repetir la pasada con seeds.
+- **P2**: las pruebas reales de la API necesitan datos mínimos; hoy los
+  fixtures se crean como superusuario en las pruebas. Si el seed completo se
+  carga en el CI, las pruebas de API podrían correr contra él.
+- **P4**: los 25 stubs están listos para integrar (mismos paths/methods/status
+  que OpenAPI). Falta sumar a `.env.example` las variables `POSTGRES_HOST` y
+  `DB_USER` (propuesta arriba; archivo fuera de mi alcance). El CI no ejecuta
+  todavía `pytest api/tests` (habría que instalar `api/requirements.txt` en el
+  workflow) — eso es de P4/infra.
+
+### Limitaciones de lo verificado
+
+- La base de verificación es un contenedor efímero con migraciones 001–007 y
+  fixtures mínimos: no es el dataset completo de seeds. D1/D4/D6 no tuvieron
+  filas que borrar; su corrección sintáctica está probada, su efecto sobre el
+  dataset completo no.
+- El criterio de `23503` depende de los mensajes estándar en inglés de
+  PostgreSQL (fallback documentado para servidores localizados).
+- `git`, el informe y las pruebas se ejecutaron en este entorno; no se hizo
+  push, PR ni merge por decisión explícita.

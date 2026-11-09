@@ -127,7 +127,9 @@ ROLLBACK;
 --     parámetro de ejemplo. Si hubiera más de una sala en esa localidad, se
 --     aplica a todas sus salas; si la consigna se interpreta con una sala
 --     puntual, reemplazar por `s.id_sala = <id>`.
---   - "Trabajaron menos de dos años" se mide desde `fecha_ingreso` hasta hoy.
+--   - "Trabajaron menos de dos años" se mide con `fn_antiguedad_anios`
+--     (consigna 5.3: filtrar por antigüedad con la función, no con aritmética
+--     de fechas).
 --   - `empleado.id_sala` es FK RESTRICT a sala; borrar empleados no toca salas.
 -- =============================================================================
 BEGIN;
@@ -138,14 +140,14 @@ FROM empleado AS e
 JOIN sala AS s ON s.id_sala = e.id_sala
 JOIN localidad AS l ON l.id_localidad = s.id_localidad
 WHERE l.nombre = 'General Alvear'
-  AND e.fecha_ingreso > CURRENT_DATE - INTERVAL '2 years';
+  AND fn_antiguedad_anios(e.fecha_ingreso) < 2;
 
 DELETE FROM empleado AS e
 USING sala AS s
 JOIN localidad AS l ON l.id_localidad = s.id_localidad
 WHERE e.id_sala = s.id_sala
   AND l.nombre = 'General Alvear'
-  AND e.fecha_ingreso > CURRENT_DATE - INTERVAL '2 years';
+  AND fn_antiguedad_anios(e.fecha_ingreso) < 2;
 
 -- Control posterior: debe devolver 0.
 SELECT COUNT(*) AS d3_empleados_restantes
@@ -153,7 +155,7 @@ FROM empleado AS e
 JOIN sala AS s ON s.id_sala = e.id_sala
 JOIN localidad AS l ON l.id_localidad = s.id_localidad
 WHERE l.nombre = 'General Alvear'
-  AND e.fecha_ingreso > CURRENT_DATE - INTERVAL '2 years';
+  AND fn_antiguedad_anios(e.fecha_ingreso) < 2;
 
 ROLLBACK;
 
