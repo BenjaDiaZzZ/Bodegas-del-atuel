@@ -1,12 +1,15 @@
 """FastAPI application factory and entrypoint."""
 
+import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from psycopg import Error as PsycopgError
 from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .db import create_pool
+from .errors import DatabaseHttpError, ErrorBody, map_db_error
 from .routers.clientes import router as clientes_router
 from .routers.comprobantes import router as comprobantes_router
 from .routers.ingresos import router as ingresos_router
@@ -14,6 +17,20 @@ from .routers.reportes import router as reportes_router
 from .routers.salud import router as salud_router
 from .routers.transferencias import router as transferencias_router
 from .routers.vinos import router as vinos_router
+
+
+def _error_response(body: ErrorBody) -> Response:
+    return Response(
+        content=json.dumps(body.payload()),
+        status_code=body.status,
+        media_type="application/json",
+    )
+
+
+def _handle_mapped_db_error(request: Request, exc: PsycopgError | DatabaseHttpError) -> Response:
+    if isinstance(exc, DatabaseHttpError):
+        return _error_response(ErrorBody(status=exc.status, **exc.payload))
+    return _error_response(map_db_error(exc))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,6 +57,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reportes_router)
     app.include_router(transferencias_router)
     app.include_router(vinos_router)
+    app.add_exception_handler(PsycopgError, _handle_mapped_db_error)
+    app.add_exception_handler(DatabaseHttpError, _handle_mapped_db_error)
     return app
 
 

@@ -46,3 +46,20 @@ def test_salud_returns_503_when_database_is_unreachable(monkeypatch):
     body = response.json()
     assert {"codigo", "mensaje"} <= set(body)
     assert "password" not in response.text.lower()
+
+
+def test_salud_returns_503_when_version_is_not_reported(monkeypatch, client):
+    from app.routers import salud as router_salud
+
+    def sin_version(pool):
+        raise RuntimeError("PostgreSQL no informó su versión")
+
+    monkeypatch.setattr(router_salud, "fetch_database_version", sin_version)
+
+    response = client.get("/salud")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["codigo"] == "DB_UNAVAILABLE"
+    assert "informó" not in body["mensaje"]
+    assert body["mensaje"] == "Base de datos no disponible."

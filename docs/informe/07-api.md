@@ -189,3 +189,74 @@ comentario `# TODO(6.x)` con la tarea del plan que lo va a implementar.
   **25 operaciones**; discrepancia cosmética.
 - `DELETE /vinos/{cod}` documenta `503` pero `DELETE /clientes/{id}` no:
   inconsistencia menor a alinear cuando se implementen (6.6/6.7).
+
+## Tarea D — Manejo central de errores SQLSTATE (plan 6.4)
+
+### Alcance
+
+Un único punto de conversión PostgreSQL → HTTP (`api/app/errors.py`) usado
+tanto por el helper de transacciones como por los exception handlers de
+FastAPI. El shape de respuesta es el schema `Error` del contrato (`codigo`,
+`mensaje`, `detalle`, `regla`).
+
+| SQLSTATE | HTTP | Comportamiento |
+|---|---|---|
+| `23505` unique_violation | 409 | `codigo` = SQLSTATE, `detalle` del diag |
+| `23503` foreign_key_violation | 409 o 422 | criterio abajo |
+| `23514` check_violation | 422 | |
+| `23502` not_null_violation | 422 | |
+| `P0001` raise_exception | 409 | conserva el mensaje `[RN-xx]` y extrae `regla` |
+| `P0002` no_data_found | 404 | |
+| `22P02` invalid_text_representation | 400 | |
+| `40001` / `40P01` serialización / deadlock | 503 | el mensaje indica que la operación puede reintentarse |
+| `42501` insufficient_privilege | 500 | cuerpo genérico, sin detalles internos |
+| desconocido | 500 | cuerpo genérico, sin fuga de texto crudo |
+
+### Criterio para `23503` (elegido y documentado)
+
+Se clasifica por la **dirección de la violación referencial**, leída del
+`detail` de PostgreSQL (fallback: `message_primary`):
+
+- «is still referenced from table» / «update or delete on table …» → la
+  operación está bloqueada por filas dependientes → **409 Conflict**.
+- «is not present in table» / «insert or update on table …» → el request
+  referencia un padre inexistente → **422**.
+- Texto no reconocido → default documentado **422**.
+
+Los dos textos estándar están en inglés en el servidor de PostgreSQL; un
+servidor localizado cae en el fallback documentado (anotado en el docstring).
+
+### Transacciones: el COMMIT va dentro del manejo de errores
+
+`tg_composicion_cien` (RN-05) es un constraint trigger `DEFERRABLE INITIALLY
+DEFERRED`: su `P0001 '[RN-05] …'` aparece en el **COMMIT**, no en el INSERT.
+Por eso `transaction()` en `api/app/db.py` ejecuta `BEGIN … COMMIT` dentro del
+`try`, y cualquier `psycopg.Error` — incluido el que levanta el propio COMMIT —
+pasa por el mapeador central (con `ROLLBACK` de seguridad).
+
+### Corrección del hallazgo de revisión R3-01
+
+`GET /salud` también captura el `RuntimeError` del repositorio (servidor sin
+`server_version`) y responde el mismo `503` saneado, en lugar de un 500 no
+documentado.
+
+### Pruebas (TDD)
+
+- **RED**: `ImportError` al importar `map_db_error` / `transaction` /
+  `DatabaseHttpError` (los módulos aún no existían).
+- **GREEN**: `57 passed` en total, de los cuales 25 son nuevas:
+  - `api/tests/test_errors.py` — 20 pruebas **sin base de datos** sobre la
+    tabla completa de mapeo (incluye el criterio de `23503` en sus tres ramas,
+    la extracción de `regla` para `P0001`, el mensaje de reintento en 503 y la
+    ausencia de fugas en 500).
+  - `api/tests/test_errors_pg.py` — 4 pruebas **reales contra PostgreSQL 16**:
+    `fn_descuento_cliente('tipo_invalido')` → 409 con `regla: RN-06`;
+    **RN-05 diferido**: el INSERT de vino + composición (porcentajes ≠ 100)
+    pasa, y el `COMMIT` devuelve `P0001 '[RN-05] …'` mapeado a 409 con
+    `regla: RN-05` (evidencia directa de que el COMMIT está dentro del
+    manejo); duplicado de `vino` → 409/`23505`; `CALL sp_procesar_ingreso(999999)`
+    → 404/`P0002`.
+  - regresión de `/salud` para el camino `RuntimeError` → 503.
+- Fixtures creadas como superusuario (el rol `app_rw` no puede insertar
+  `bodega`/`cepa`); el ejercicio de las sentencias corre como `app_rw` y el
+  teardown deja los conteos en 0.

@@ -33,7 +33,7 @@ class ErrorResponse(BaseModel):
 def get_salud(request: Request) -> SaludResponse | JSONResponse:
     try:
         version = fetch_database_version(request.app.state.pool)
-    except PsycopgError:
+    except (PsycopgError, RuntimeError):
         return JSONResponse(
             status_code=503,
             content={
