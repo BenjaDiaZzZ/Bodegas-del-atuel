@@ -43,17 +43,6 @@ _PDF = (
 
 VINO_RESUMEN_KEYS = set(_PDF)
 VINO_DETALLE_KEYS = VINO_RESUMEN_KEYS | {"composicion", "maridajes", "stock"}
-CLIENTE_RESUMEN_KEYS = {
-    "id_cliente",
-    "nombre",
-    "tipo",
-    "tipo_documento",
-    "nro_documento",
-    "id_localidad",
-    "fecha_alta",
-    "descuento",
-}
-CLIENTE_DETALLE_KEYS = CLIENTE_RESUMEN_KEYS
 COMPROBANTE_KEYS = {
     "nro_comprobante",
     "fecha",
@@ -82,15 +71,6 @@ VINO_SIN_STOCK_KEYS = {
 }
 TRANSPORTISTA_KEYS = {"id_transportista", "razon_social", "ingresos_trasladados"}
 
-CLIENTE_CREATE_BODY = {
-    "nombre": "Juan Pérez",
-    "tipo": "socio",
-    "tipo_documento": "DNI",
-    "nro_documento": "30123456",
-    "direccion": "Av. San Martín 123",
-    "id_localidad": 1,
-}
-
 COMPROBANTE_CREATE_BODY = {
     "id_cliente": 1,
     "id_sala": 1,
@@ -107,11 +87,12 @@ REGLON_CREATE_BODY = {"cod_vino": 1, "cantidad": 120}
 # expected_keys=None means no response body (204).
 ROUTES = [
     ("GET", "/salud", None, 200, SALUD_KEYS),
-    ("GET", "/clientes", None, 200, PAGE_KEYS | CLIENTE_RESUMEN_KEYS),
-    ("POST", "/clientes", CLIENTE_CREATE_BODY, 201, CLIENTE_DETALLE_KEYS),
-    ("GET", "/clientes/1", None, 200, CLIENTE_DETALLE_KEYS),
-    ("PUT", "/clientes/1", CLIENTE_CREATE_BODY, 200, CLIENTE_DETALLE_KEYS),
-    ("DELETE", "/clientes/1", None, 204, None),
+    # GET /vinos, GET /vinos/{cod} (6.5) and POST/PUT/DELETE /vinos (6.6) are
+    # real: their behavior is covered by test_vinos_endpoints.py against a
+    # real database, so they no longer belong to the fixed-payload stub
+    # matrix. The 5 /clientes operations (6.7) moved to
+    # test_clientes_endpoints.py for the same reason. Remove rows here as
+    # each endpoint becomes real (6.8-6.10).
     ("POST", "/comprobantes", COMPROBANTE_CREATE_BODY, 201, COMPROBANTE_KEYS),
     ("GET", "/comprobantes/1001", None, 200, COMPROBANTE_KEYS),
     ("POST", "/transferencias", TRANSFERENCIA_CREATE_BODY, 201, TRANSFERENCIA_KEYS),
