@@ -914,3 +914,109 @@ fijo del stub). GREEN: **18 aprobadas**. **Suite completa: `169 passed`**
 - La base de verificación sigue siendo el contenedor efímero con migraciones
   001–008 y catálogos mínimos creados como superusuario en las pruebas.
 - No se hizo commit, push ni PR por decisión explícita de la tarea.
+
+## Tarea 6.10 — Reportes
+
+### Alcance
+
+Las cinco operaciones de solo lectura de `/reportes` dejaron de ser stubs y se
+conectan a `repos/reportes.py` (6.3, ya probado en
+`test_repos_reportes.py`): `GET /reportes/top-vinos` (S1), `GET
+/reportes/ventas-por-sala` (S8, vista `vw_ventas_mensuales_sala`), `GET
+/reportes/vinos-sin-stock` (S6), `GET /reportes/transportista-activo` (S7) y
+`GET /reportes/trazabilidad/{cod}` (S9, vista `vw_ficha_vino`).
+`api/tests/test_stubs.py` perdió sus 5 filas de `/reportes` y sus constantes
+`TOP_VINO_KEYS`/`VENTA_MENSUAL_KEYS`/`VINO_SIN_STOCK_KEYS`/
+`TRANSPORTISTA_KEYS`/`VINO_DETALLE_KEYS`/`_PDF` (mismo patrón que 6.5–6.9) y
+la cobertura HTTP vive en `api/tests/test_reportes_endpoints.py`: la matriz de
+stubs quedó solo con `/salud`. Además se eliminó el código de ejemplo
+heredado de 6.5: `detalle_vino_example` y las constantes `_EXAMPLE_*` en
+`routers/vinos.py` ya no tienen ningún usador (el único era el stub de
+reportes, que este 6.10 reemplaza); se verificó antes por grep que nada más
+importaba esos nombres y se borró el import correspondiente del router de
+reportes.
+
+### Decisiones
+
+- **Solo lectura end-to-end**: los 5 GET delegan en el repositorio
+  (`repo_reportes.*`) y solo convierten las filas a Pydantic; la API no
+  calcula ningún total, stock ni ranking (regla de oro). No hay SQL ni
+  mapeo de errores en el router.
+- **Parámetros espejo del contrato**: `limite` con `Query(ge=1, le=100)`
+  (mínimo/máximo del contrato en 6.5–6.9); `id_sala` requerido;
+  `desde`/`hasta` tipados como `date` nativo — una fecha malformada
+  responde 400 `VALIDATION_ERROR` en el límite HTTP y nunca llega a la
+  base (evita caer en un SQLSTATE `22007`, que el mapa central no cubre
+  con 400).
+- **Serialización**: `mes` llega como `date` nativo de
+  `vw_ventas_mensuales_sala` y el contrato lo declara `str` (fecha ISO,
+  primer día del mes) — mismo helper `_fecha_iso` que 6.7–6.9.
+  `monto_total` (`numeric`) lo coerciona Pydantic al `float` del esquema.
+- **Dos 404 en el patrón usado hasta acá**: `transportista-activo` → 404
+  cuando ningún transportista tuvo ingresos en el último mes (el repo
+  devuelve `None` con `LIMIT 1` y `COUNT`); `trazabilidad/{cod}` → 404
+  `No existe el vino <cod>.`, idéntico a `GET /vinos/{cod}` (ambos leen la
+  misma ficha vía `_cargar_ficha` sobre `vw_ficha_vino`).
+- **Lista vacía = 200 `[]`**: si ningún vino cumple la condición del
+  reporte (o el filtro mensual excluye todo el rango), se responde 200 con
+  el arreglo vacío; no se inventa un 404 que el repositorio no decide.
+
+### Pruebas (10 nuevas, integración HTTP contra PostgreSQL 16)
+
+Mismo dataset tipo `test_repos_reportes.py` con marcadores únicos: 2 vinos
+vendidos (A 2 botellas × 100.00, B × 50.00; socio −10 % de R-002), C sin
+stock con 7 en depósito, transportista activo con 2 ingresos de hoy y viejo
+con 1 de hace 35 días. Verificaciones: top-vinos ordenado `SUM(cantidad)
+DESC` con valores exactos (A: 2, B: 1) y corte `limite=1`;
+`limite` 0 y 101 → 400 `VALIDATION_ERROR`; ventas-por-sala con la fila
+exacta de la vista (3 botellas, 225.00 = 180 + 45) más filtro
+`desde`/`hasta` inclusive y `desde` futuro → 200 `[]` (reporte vacío);
+fecha malformada `desde=ayer` → 400; vinos-sin-stock con única fila exacta
+(0/7) idéntica en una segunda sala sin ninguna fila de stock (COALESCE) y
+`id_sala` ausente → 400; transportista-activo con el más cargado (2
+ingresos) y sin ingresos → 404 (dataset recreado en el `finally` de la
+misma prueba); trazabilidad 200 con la ficha **idéntica a la de `GET
+/vinos/{cod}`** (composición 100 %, stock 0/8/8 tras la venta) y vino
+inexistente → 404 `Error` `NOT_FOUND`. RED observado primero: **9 fallos,
+1 aprobada** contra los stubs (la que pasa: `id_sala` requerida —la
+validación del framework corre antes del handler stub—). GREEN: **10
+aprobadas**. **Suite completa: `174 passed`** (169 base + 10 nuevas − 5
+filas de stub retiradas). Redocly: válida, solo las 2 advertencias
+conocidas.
+
+### Requiere coordinación
+
+- **P2 — rótulos de consultas S**: el contrato openapi etiqueta S1
+  top-vinos, S8 ventas-por-sala, S6 vinos-sin-stock, S7
+  transportista-activo y S9 trazabilidad, mientras que la semántica
+  canónica que implementa el repositorio viene de `consultas/select.sql`:
+  el ranking de vinos es S4 allí (no S1), stocks/vinos-sin-stock es S6,
+  transportistas S7/I1 y ventas S8; la trazabilidad no existe como consulta
+  «S» en select.sql (ficha de `vw_ficha_vino`). El repositorio fijó las
+  SEMÁNTICAS del select.sql aunque los rótulos difieran: P2 debe unificar
+  los números en una fuente única (contrato o select.sql).
+- **P2/P3 — 404 de `/reportes/vinos-sin-stock`**: el contrato documenta un
+  404 (`NotFound`) para esa operación, pero el repositorio no distingue
+  «sala inexistente» de «sala sin vinos con esa condición» (ambas → 200
+  con lista vacía) y ninguna otra fuente define qué dispara el 404. No se
+  inventó una consulta extra de existencia de sala en el router (regla de
+  oro): decidir con P2 si se quita el 404 del contrato o si el caso pasa a
+  la capa de datos.
+- **P1/P2 — `22007` fuera del mapa central**: `map_db_error` no cubre
+  `22007` (formato de fecha/hora inválido) con 400; hoy no alcanza a ser
+  observado por HTTP porque `desde`/`hasta` se validan como `date` en el
+  router. Si otra entrada futura puede provocar un `22007` dentro de la
+  base, correspondería mapearlo a 400 en `errors.py` (Responsable: P3).
+- **P4**: los 5 endpoints de reportes responden contra la base real con
+  los paths, parámetros y status de OpenAPI; la matriz de stubs queda solo
+  con `/salud` (6.11+ ya no tiene operaciones HTTP restantes en el
+  contrato).
+
+### Limitaciones de lo verificado
+
+- La base de verificación sigue siendo el contenedor efímero con migraciones
+  001–008 y catálogos mínimos creados como superusuario en las pruebas; los
+  criterios de desempate del ranking (`cod_vino ASC`) y el corte por
+  `LIMIT` ya quedaron fijados a nivel repositorio en
+  `test_repos_reportes.py`.
+- No se hizo commit, push ni PR por decisión explícita de la tarea.

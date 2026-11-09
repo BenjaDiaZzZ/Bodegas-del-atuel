@@ -30,53 +30,19 @@ SALUD_KEYS = {"status", "db", "version", "timestamp"}
 
 PAGE_KEYS = {"data", "meta"}
 
-_PDF = (
-    "cod_vino",
-    "nombre_comercial",
-    "tipo",
-    "anada",
-    "presentacion_ml",
-    "graduacion",
-    "precio_venta",
-    "cuit_bodega",
-)
-
-VINO_RESUMEN_KEYS = set(_PDF)
-VINO_DETALLE_KEYS = VINO_RESUMEN_KEYS | {"composicion", "maridajes", "stock"}
-TOP_VINO_KEYS = {"cod_vino", "nombre_comercial", "botellas_vendidas"}
-VENTA_MENSUAL_KEYS = {
-    "id_sala",
-    "localidad",
-    "mes",
-    "botellas_vendidas",
-    "monto_total",
-}
-VINO_SIN_STOCK_KEYS = {
-    "cod_vino",
-    "nombre_comercial",
-    "stock_sala",
-    "stock_deposito",
-}
-TRANSPORTISTA_KEYS = {"id_transportista", "razon_social", "ingresos_trasladados"}
-
 # (method, path, body, expected_status, expected_keys)
 # expected_keys=None means no response body (204).
 ROUTES = [
     ("GET", "/salud", None, 200, SALUD_KEYS),
-    # GET /vinos, GET /vinos/{cod} (6.5) and POST/PUT/DELETE /vinos (6.6) are
-    # real: their behavior is covered by test_vinos_endpoints.py against a
-    # real database, so they no longer belong to the fixed-payload stub
-    # matrix. The 5 /clientes operations (6.7) moved to
-    # test_clientes_endpoints.py, the 2 /comprobantes operations (6.8) to
-    # test_comprobantes_endpoints.py and the 8 document operations
-    # (4 /transferencias + 4 /ingresos, 6.9) to test_documentos_endpoints.py
-    # for the same reason. Remove rows here as each endpoint becomes real
-    # (6.10).
-    ("GET", "/reportes/top-vinos", None, 200, TOP_VINO_KEYS),
-    ("GET", "/reportes/ventas-por-sala", None, 200, VENTA_MENSUAL_KEYS),
-    ("GET", "/reportes/vinos-sin-stock?id_sala=1", None, 200, VINO_SIN_STOCK_KEYS),
-    ("GET", "/reportes/transportista-activo", None, 200, TRANSPORTISTA_KEYS),
-    ("GET", "/reportes/trazabilidad/1", None, 200, VINO_DETALLE_KEYS),
+    # /salud is the only row left: every other documented operation became
+    # real. GET /vinos and GET /vinos/{cod} (6.5) moved to
+    # test_vinos_endpoints.py; POST/PUT/DELETE /vinos (6.6) too; the 5
+    # /clientes operations (6.7) to test_clientes_endpoints.py; the 2
+    # /comprobantes operations (6.8) to test_comprobantes_endpoints.py; the
+    # 8 document operations (4 /transferencias + 4 /ingresos, 6.9) to
+    # test_documentos_endpoints.py; and the 5 read-only /reportes
+    # operations (6.10) to test_reportes_endpoints.py. Remove rows here as
+    # each endpoint becomes real — none remains to retire (6.11+).
 ]
 
 

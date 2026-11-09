@@ -17,43 +17,6 @@ from ..schemas import (
 
 router = APIRouter(tags=["Vinos"])
 
-_EXAMPLE_META = {"page": 1, "per_page": 20, "total": 137, "total_pages": 7}
-
-_EXAMPLE_VINO = {
-    "cod_vino": 1,
-    "nombre_comercial": "Malbec Reserva",
-    "tipo": "tinto",
-    "anada": 2021,
-    "presentacion_ml": 750,
-    "graduacion": 14.0,
-    "precio_venta": 12500.0,
-    "cuit_bodega": "30712345678",
-    "bodega": "Bodega del Atuel S.A.",
-}
-
-_EXAMPLE_COMPOSICION = [
-    {"id_cepa": 1, "nombre": "Malbec", "porcentaje": 85.0},
-    {"id_cepa": 2, "nombre": "Bonarda", "porcentaje": 15.0},
-]
-
-_EXAMPLE_MARIDAJES = [
-    {"id_maridaje": 1, "nombre": "Carnes rojas", "temperatura_servicio": 17.0},
-]
-
-_EXAMPLE_STOCK = {"deposito": 120, "salas": 45, "total": 165}
-
-
-def detalle_vino_example(cod: int) -> VinoDetalle:
-    return VinoDetalle.model_validate(
-        {
-            **_EXAMPLE_VINO,
-            "cod_vino": cod,
-            "composicion": _EXAMPLE_COMPOSICION,
-            "maridajes": _EXAMPLE_MARIDAJES,
-            "stock": _EXAMPLE_STOCK,
-        }
-    )
-
 
 @router.get("/vinos", operation_id="listarVinos", response_model=VinoPage)
 def listar_vinos(

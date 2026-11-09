@@ -1,7 +1,12 @@
-"""Stub endpoints for reportes (Bodegas del Atuel API)."""
+"""Endpoints of the reportes operations (Bodegas del Atuel API)."""
 
-from fastapi import APIRouter
+from datetime import date
+from typing import Annotated
 
+from fastapi import APIRouter, Query, Request
+
+from ..errors import DatabaseHttpError
+from ..repos import reportes as repo_reportes
 from ..schemas import (
     TopVino,
     TransportistaActivo,
@@ -9,9 +14,18 @@ from ..schemas import (
     VinoDetalle,
     VinoSinStock,
 )
-from .vinos import detalle_vino_example
 
 router = APIRouter(tags=["Reportes"])
+
+
+def _fecha_iso(valor):
+    """Native DB ``date`` -> ISO string expected by the response schemas."""
+    return valor.isoformat() if isinstance(valor, date) else valor
+
+
+def _mes(fila: dict) -> VentaMensualSala:
+    """Shape one repository row of ``vw_ventas_mensuales_sala``."""
+    return VentaMensualSala.model_validate({**fila, "mes": _fecha_iso(fila["mes"])})
 
 
 @router.get(
@@ -19,17 +33,13 @@ router = APIRouter(tags=["Reportes"])
     operation_id="reporteTopVinos",
     response_model=list[TopVino],
 )
-def reporte_top_vinos(limite: int = 10) -> list[TopVino]:
-    # TODO(6.10): calcular el ranking de vinos más vendidos (S1) desde PostgreSQL.
-    return [
-        TopVino.model_validate(
-            {
-                "cod_vino": 1,
-                "nombre_comercial": "Malbec Reserva",
-                "botellas_vendidas": 1520,
-            }
-        )
-    ]
+def reporte_top_vinos(
+    request: Request,
+    limite: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> list[TopVino]:
+    """Return the most sold wines (S1), ranked by SUM(cantidad) DESC."""
+    filas = repo_reportes.top_vinos(request.app.state.pool, limite=limite)
+    return [TopVino.model_validate(fila) for fila in filas]
 
 
 @router.get(
@@ -37,19 +47,16 @@ def reporte_top_vinos(limite: int = 10) -> list[TopVino]:
     operation_id="reporteVentasPorSala",
     response_model=list[VentaMensualSala],
 )
-def reporte_ventas_por_sala(desde: str | None = None, hasta: str | None = None) -> list[VentaMensualSala]:
-    # TODO(6.10): leer las ventas mensuales por sala (S8) desde PostgreSQL.
-    return [
-        VentaMensualSala.model_validate(
-            {
-                "id_sala": 1,
-                "localidad": "San Rafael",
-                "mes": "2026-09-01",
-                "botellas_vendidas": 430,
-                "monto_total": 5375000.0,
-            }
-        )
-    ]
+def reporte_ventas_por_sala(
+    request: Request,
+    desde: date | None = None,
+    hasta: date | None = None,
+) -> list[VentaMensualSala]:
+    """Return the monthly sales per sala (S8) from the team's view."""
+    filas = repo_reportes.ventas_por_sala(
+        request.app.state.pool, desde=desde, hasta=hasta
+    )
+    return [_mes(fila) for fila in filas]
 
 
 @router.get(
@@ -57,18 +64,10 @@ def reporte_ventas_por_sala(desde: str | None = None, hasta: str | None = None) 
     operation_id="reporteVinosSinStock",
     response_model=list[VinoSinStock],
 )
-def reporte_vinos_sin_stock(id_sala: int) -> list[VinoSinStock]:
-    # TODO(6.10): comparar stock de sala y depósito (S6) desde PostgreSQL.
-    return [
-        VinoSinStock.model_validate(
-            {
-                "cod_vino": 1,
-                "nombre_comercial": "Malbec Reserva",
-                "stock_sala": 0,
-                "stock_deposito": 120,
-            }
-        )
-    ]
+def reporte_vinos_sin_stock(request: Request, id_sala: int) -> list[VinoSinStock]:
+    """Return the wines with stock in deposito but none in the sala (S6)."""
+    filas = repo_reportes.vinos_sin_stock(request.app.state.pool, id_sala)
+    return [VinoSinStock.model_validate(fila) for fila in filas]
 
 
 @router.get(
@@ -76,15 +75,20 @@ def reporte_vinos_sin_stock(id_sala: int) -> list[VinoSinStock]:
     operation_id="reporteTransportistaActivo",
     response_model=TransportistaActivo,
 )
-def reporte_transportista_activo() -> TransportistaActivo:
-    # TODO(6.10): calcular el transportista con mayor actividad del último mes (S7).
-    return TransportistaActivo.model_validate(
-        {
-            "id_transportista": 1,
-            "razon_social": "Transportes Cuyo SRL",
-            "ingresos_trasladados": 48,
-        }
-    )
+def reporte_transportista_activo(request: Request) -> TransportistaActivo:
+    """Return the transportista with most ingresos in the last month (S7) or 404."""
+    fila = repo_reportes.transportista_activo(request.app.state.pool)
+    if fila is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": "No hay transportistas con actividad en el ultimo mes.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return TransportistaActivo.model_validate(fila)
 
 
 @router.get(
@@ -92,6 +96,17 @@ def reporte_transportista_activo() -> TransportistaActivo:
     operation_id="reporteTrazabilidadVino",
     response_model=VinoDetalle,
 )
-def reporte_trazabilidad_vino(cod: int) -> VinoDetalle:
-    # TODO(6.10): leer la ficha completa del vino desde la vista vw_ficha_vino (S9).
-    return detalle_vino_example(cod)
+def reporte_trazabilidad_vino(cod: int, request: Request) -> VinoDetalle:
+    """Return the full wine card from ``vw_ficha_vino`` (S9) or 404."""
+    ficha = repo_reportes.trazabilidad_vino(request.app.state.pool, cod)
+    if ficha is None:
+        raise DatabaseHttpError(
+            404,
+            {
+                "codigo": "NOT_FOUND",
+                "mensaje": f"No existe el vino {cod}.",
+                "detalle": None,
+                "regla": None,
+            },
+        )
+    return VinoDetalle.model_validate(ficha)
