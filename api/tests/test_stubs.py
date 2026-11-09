@@ -4,11 +4,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app.config import Settings
 
 
 @pytest.fixture
-def client():
-    with TestClient(main.create_app()) as test_client:
+def client(monkeypatch):
+    from app.routers import salud as router_salud
+
+    def version_registrada(pool):
+        return "PostgreSQL 0.0-stub"
+
+    monkeypatch.setattr(router_salud, "fetch_database_version", version_registrada)
+    settings = Settings(
+        host="127.0.0.1",
+        port=1,
+        dbname="stub_tests",
+        user="app_rw",
+        password="stub-not-used",
+    )
+    with TestClient(main.create_app(settings)) as test_client:
         yield test_client
 
 

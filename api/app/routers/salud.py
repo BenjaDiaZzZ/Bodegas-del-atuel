@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from psycopg import Error as PsycopgError
 from pydantic import BaseModel
 
-from ..repos.salud import fetch_database_version
+from ..repos.salud import ServerVersionUnavailable, fetch_database_version
 
 router = APIRouter(tags=["Salud"])
 
@@ -33,7 +33,7 @@ class ErrorResponse(BaseModel):
 def get_salud(request: Request) -> SaludResponse | JSONResponse:
     try:
         version = fetch_database_version(request.app.state.pool)
-    except (PsycopgError, RuntimeError):
+    except (PsycopgError, ServerVersionUnavailable):
         return JSONResponse(
             status_code=503,
             content={

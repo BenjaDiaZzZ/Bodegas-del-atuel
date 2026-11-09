@@ -6,18 +6,22 @@ that app_rw cannot write.
 """
 
 import os
+import uuid
 
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 
 from app.config import Settings
-from app.db import create_pool, transaction
+from app.db import create_pool, get_connection, transaction
 from app.errors import DatabaseHttpError
 
-FIXTURE_CUIT = "92999999929"
-FIXTURE_VINO_NOMBRE = "Vino prueba RN-05"
-FIXTURE_CEPA_NOMBRE = "Cepa prueba RN-05"
+# Per-run markers: unique keys so a shared test database never loses
+# unrelated data at teardown and crashed runs cannot collide on UNIQUE.
+_FIXTURE_TAIL = uuid.uuid4().hex[:10]
+FIXTURE_CUIT = f"92{(uuid.uuid4().int % 10**9):09d}"
+FIXTURE_VINO_NOMBRE = f"Vino prueba {_FIXTURE_TAIL}"
+FIXTURE_CEPA_NOMBRE = f"Cepa prueba {_FIXTURE_TAIL}"
 
 
 @pytest.fixture(scope="module")
@@ -125,6 +129,29 @@ def test_unique_violation_duplicate_vino_maps_to_409(pool, bodega_y_cepas):
     error = raised.value
     assert error.status == 409
     assert error.payload["codigo"] == "23505"
+
+
+def test_transaction_rolls_back_and_reraises_generic_exception(pool, bodega_y_cepas):
+    vino_nombre = f"Vino rollback {_FIXTURE_TAIL}"
+
+    with pytest.raises(ValueError, match="boom interno") as raised:
+        with transaction(pool) as connection:
+            connection.execute(
+                "INSERT INTO vino (nombre_comercial, tipo, anada, presentacion_ml, graduacion, precio_venta, cuit_bodega)"
+                " VALUES (%s, 'blanco', 2025, 750, 12.00, 90.00, %s)",
+                (vino_nombre, FIXTURE_CUIT),
+            )
+            raise ValueError("boom interno")
+
+    assert type(raised.value) is ValueError
+
+    with get_connection(pool) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) FROM vino WHERE nombre_comercial = %s",
+            (vino_nombre,),
+        ).fetchone()
+
+    assert row == (0,)
 
 
 def test_p0002_missing_ingreso_maps_to_404(pool):

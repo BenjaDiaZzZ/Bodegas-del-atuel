@@ -34,10 +34,9 @@ def _handle_mapped_db_error(request: Request, exc: PsycopgError | DatabaseHttpEr
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    app_settings = settings or Settings.from_env()
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app_settings = settings or Settings.from_env()
         pool: ConnectionPool = create_pool(app_settings)
         app.state.pool = pool
         try:

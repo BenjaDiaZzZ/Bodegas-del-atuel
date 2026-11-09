@@ -27,6 +27,15 @@ def test_config_requires_database_name(monkeypatch):
         Settings.from_env()
 
 
+def test_config_rejects_non_numeric_postgres_port(monkeypatch):
+    monkeypatch.setenv("POSTGRES_DB", "bodegas_del_atuel")
+    monkeypatch.setenv("DB_PASSWORD", "not-a-real-password")
+    monkeypatch.setenv("POSTGRES_PORT", "abc")
+
+    with pytest.raises(RuntimeError, match="POSTGRES_PORT"):
+        Settings.from_env()
+
+
 def test_connection_helper_executes_select_1():
     pool = create_pool(Settings.from_env())
     try:

@@ -20,11 +20,23 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             host=os.environ.get("POSTGRES_HOST", DEFAULT_HOST),
-            port=int(os.environ.get("POSTGRES_PORT", DEFAULT_PORT)),
+            port=_port_from_env(),
             dbname=_required("POSTGRES_DB"),
             user=os.environ.get("DB_USER", DEFAULT_USER),
             password=_required("DB_PASSWORD"),
         )
+
+
+def _port_from_env() -> int:
+    raw = os.environ.get("POSTGRES_PORT")
+    if raw is None:
+        return DEFAULT_PORT
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(
+            f"La variable de entorno POSTGRES_PORT no es un entero valido: {raw}"
+        ) from None
 
 
 def _required(name: str) -> str:

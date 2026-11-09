@@ -356,21 +356,34 @@ procedimiento.
   3 que violen reglas — ya hay más de 3, pero el mínimo del plan se cierra con
   la implementación real), 6.12 demo de inyección SQL, 6.13 Dockerfile y
   coherencia final OpenAPI/rutas, 9.2 consolidación del informe final.
-- Hallazgos no bloqueantes de las revisiones (trabajo posterior, no reabren
-  los recibos):
-  - R3-02: construcción `app = create_app()` en tiempo de import exige
-    variables de entorno incluso para correr pruebas independientes de la base.
-  - R3-03: `POSTGRES_PORT` no numérico lanza `ValueError` sin nombrar la
-    variable.
-  - R3-3: el fixture de stubs arranca el pool por el lifespan aunque los
-    stubs no tocan la base.
-  - R3-4: `ClienteUpdate` no incluye `tipo` (coincide con el contrato actual;
-    el TODO del stub es adelanto de 6.7).
-  - R3-001: el seam de renderizado de errores de FastAPI no tiene una prueba
-    a nivel de app (los tests cubren `map_db_error` y `transaction`).
-  - R3-002: `RuntimeError` genérico en `/salud` podría enmascarar defectos
-    internos como «base no disponible».
-  - R3-003: el teardown del fixture PG borra por claves fijas.
+- Hallazgos no bloqueantes de las revisiones: todos triados y cerrados en la
+  sección «Cierre de advisories de revisión» (R3-4 aceptado; el resto
+  corregido con pruebas de regresión). R3-01 ya se había corregido en la tarea
+  D. R3-04 (pin del catch de `/salud` sin depender de la jerarquía del pool)
+  quedó fuera del alcance pedido; los tests nuevos del seam de errores lo
+  cubren parcialmente.
+
+### Cierre de advisories de revisión (2026-11-09)
+
+Revisión acotada de los siete advisories pendientes. Cada uno se verificó
+contra el código vigente, se clasificó y (si correspondía a P3) se corrigió
+con su prueba de regresión.
+
+| Advisory | ¿Vigente? | Clasificación | Resolución |
+|---|---|---|---|
+| R3-02 — `create_app()` leía el entorno en el import | Sí | **corregido** | `Settings.from_env()` se resuelve recién al arrancar el lifespan; `import app.main` ya no exige variables de entorno (el entrypoint `uvicorn app.main:app` no cambia y sin entorno falla rápido al arrancar). Prueba: import en subproceso con el entorno vacío. |
+| R3-03 — `POSTGRES_PORT` no numérico sin nombre de variable | Sí | **corregido** | `_port_from_env()` lanza `RuntimeError` nombrando `POSTGRES_PORT` (estilo consistente con `_required`). Prueba: `POSTGRES_PORT=abc`. |
+| R3-3 — los tests de stubs exigían entorno/base viva | Sí | **corregido** | El fixture arma la app con `Settings` dummy explícitos y stubbea `fetch_database_version`; los 26 tests corren **sin variables de entorno y sin PostgreSQL** (comando de verificación propio). |
+| R3-4 — `ClienteUpdate` sin `tipo` | Sí | **aceptado** | El contrato OpenAPI no incluye `tipo` en la actualización de clientes y el mirror de `schemas.py` es correcto; el TODO del stub es adelanto de 6.7, donde un cambio así exige actualizar el contrato (ver «Requiere coordinación»). |
+| R3-001 — seam de renderizado de errores sin prueba de app | Sí | **corregido** | `api/tests/test_error_handlers.py`: ruta de prueba que dispara `P0001 '[RN-99]'` → 409 con `regla: RN-99`; `DatabaseHttpError(404)` → cuerpo `Error` intacto; y en `test_errors_pg.py` el branch genérico de `transaction()` (un `ValueError` se propaga sin convertir y el ROLLBACK se aplica: la fila insertada no persiste). |
+| R3-002 — `RuntimeError` genérico enmascaraba defectos | Sí | **corregido** | Excepción centinela `ServerVersionUnavailable` en `repos/salud.py`; el router ya no captura `RuntimeError` a secas: un defecto interno responde **500** y solo la indisponibilidad real responde 503 (pruebas en ambos sentidos). |
+| R3-003 — fixtures con claves fijas | Sí | **corregido** | CUIT y nombres de fixture ahora son únicos por corrida (11 dígitos válidos + sufijo uuid); el teardown borra solo sus propias claves. |
+
+Pruebas tras el cierre: **63 passed** con la base efímera (57 previas + 6 de
+regresión nuevas) y **26 passed** de stubs con el entorno vacío. TDD: se
+observó el RED de cada corrección antes de implementarla (los dos tests de
+R3-001 documentan comportamiento ya correcto y funcionan como guardia de
+regresión).
 
 ### Requiere coordinación
 
