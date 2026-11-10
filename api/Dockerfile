@@ -6,8 +6,9 @@
 #   docker build -f api/Dockerfile -t bodegas-api .
 #
 # Run with the environment documented in docs/informe/07-api.md
-# (POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, DB_USER, DB_PASSWORD) — never
-# bake credentials into the image:
+# (POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, DB_USER, DB_PASSWORD,
+# POSTGRES_SSLMODE — use sslmode=require for Aiven) — never bake credentials
+# into the image:
 #
 #   docker run --rm -p 8000:8000 --env-file .env bodegas-api
 #

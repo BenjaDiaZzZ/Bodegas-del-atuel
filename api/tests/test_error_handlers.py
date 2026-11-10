@@ -21,6 +21,7 @@ def _dummy_settings() -> Settings:
         dbname="dummy-not-used",
         user="app_rw",
         password="not-used",
+        sslmode="prefer",
     )
 
 
@@ -36,7 +37,14 @@ def forged(error_class, message=None, detail=None):
 def test_app_main_imports_without_database_environment():
     api_dir = Path(__file__).resolve().parents[1]
     stripped_env = os.environ.copy()
-    for name in ("POSTGRES_DB", "DB_PASSWORD", "DB_USER", "POSTGRES_HOST", "POSTGRES_PORT"):
+    for name in (
+        "POSTGRES_DB",
+        "DB_PASSWORD",
+        "DB_USER",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_SSLMODE",
+    ):
         stripped_env.pop(name, None)
 
     result = subprocess.run(
