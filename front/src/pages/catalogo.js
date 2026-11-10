@@ -153,28 +153,20 @@ function plantilla(filtros) {
   return `
     <section class="page">
       <div class="page-header">
-        <div>
-          <h1>Catálogo de vinos</h1>
-          <p class="muted">Listado paginado y filtrado desde la API.</p>
+        <h1>Catálogo de vinos</h1>
+        <div class="page-actions">
+          <a class="button" href="#/vinos/nuevo">Nuevo vino</a>
         </div>
-        <span class="pill">Datos de la API</span>
       </div>
 
-      <div class="page-actions">
-        <a class="button" href="#/vinos/nuevo">Nuevo vino</a>
-        <a class="button button-secondary" href="#/ventas/nueva">Nueva venta</a>
-        <a class="button button-secondary" href="#/transferencias/nueva">Transferencias</a>
-        <a class="button button-secondary" href="#/tablero">Tablero</a>
-      </div>
-
-      <div class="page-actions" style="justify-content:flex-start;margin:12px 0 0">
+      <div class="page-actions" style="justify-content:flex-start;margin:8px 0 16px">
         <button class="button button-secondary button-small" id="toggle-filtros" type="button" aria-expanded="true" aria-controls="filtros">Ocultar filtros</button>
       </div>
 
       <form id="filtros" class="filters" role="search">
         <label class="field">
           <span>Nombre</span>
-          <input name="nombre" type="search" value="${escapeHtml(filtros.nombre)}" placeholder="Ej.: Malbec" autocomplete="off" />
+          <input name="nombre" type="search" value="${escapeHtml(filtros.nombre)}" placeholder="Buscar por nombre" autocomplete="off" />
         </label>
         <label class="field">
           <span>Tipo</span>
@@ -184,19 +176,19 @@ function plantilla(filtros) {
           </select>
         </label>
         <label class="field">
-          <span>Cepa (ID)</span>
-          <input name="id_cepa" type="number" min="1" step="1" value="${escapeHtml(filtros.idCepa)}" placeholder="Ej.: 1" />
+          <span>Cepa</span>
+          <input name="id_cepa" type="number" min="1" step="1" value="${escapeHtml(filtros.idCepa)}" placeholder="ID de cepa" />
         </label>
         <label class="field">
-          <span>Bodega (CUIT)</span>
+          <span>Bodega CUIT</span>
           <input name="cuit_bodega" type="text" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" value="${escapeHtml(filtros.cuitBodega)}" placeholder="11 dígitos" />
         </label>
         <label class="field">
           <span>Añada</span>
-          <input name="anada" type="number" min="1900" max="2100" step="1" value="${escapeHtml(filtros.anada)}" placeholder="Ej.: 2021" />
+          <input name="anada" type="number" min="1900" max="2100" step="1" value="${escapeHtml(filtros.anada)}" placeholder="Año" />
         </label>
         <div class="filter-actions">
-          <button class="button" type="submit">Buscar</button>
+          <button class="button" type="submit">Filtrar</button>
           <button class="button button-secondary" type="button" id="limpiar">Limpiar</button>
         </div>
       </form>
