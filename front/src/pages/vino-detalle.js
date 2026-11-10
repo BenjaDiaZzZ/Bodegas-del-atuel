@@ -76,19 +76,30 @@ function listaComposicion(composicion) {
     return '<p class="muted">Sin composición informada.</p>';
   }
 
+  const total = composicion.reduce((a, i) => a + Number(i.porcentaje || 0), 0);
   return `
-    <ul class="simple-list">
+    <div class="chart">
       ${composicion
         .map(
-          (item) => `
-            <li>
-              <a class="link" href="#/?id_cepa=${encodeURIComponent(item.id_cepa)}">${escapeHtml(item.nombre || `Cepa ${item.id_cepa}`)}</a>
-              <span class="badge">${escapeHtml(numero(item.porcentaje))} %</span>
-            </li>
-          `,
+          (item) => {
+            const porcentaje = Number(item.porcentaje || 0);
+            const ancho = total > 0 ? Math.max(2, Math.round((porcentaje / total) * 100)) : 0;
+            return `
+              <div class="chart-row">
+                <div class="chart-label">
+                  <a class="link" href="#/?id_cepa=${encodeURIComponent(item.id_cepa)}">${escapeHtml(item.nombre || `Cepa ${item.id_cepa}`)}</a>
+                </div>
+                <div class="chart-track">
+                  <div class="chart-bar" style="width:${ancho}%"></div>
+                </div>
+                <div class="chart-value">${escapeHtml(numero(porcentaje))} %</div>
+              </div>
+            `;
+          },
         )
         .join('')}
-    </ul>
+    </div>
+    <p class="muted" style="margin-top:8px">Total ${escapeHtml(numero(total))} %</p>
   `;
 }
 

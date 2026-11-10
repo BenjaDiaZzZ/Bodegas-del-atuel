@@ -96,7 +96,7 @@ export function renderVinoForm(outlet, { codVino } = {}) {
         (acumulado, item) => acumulado + (Number.isFinite(item.porcentaje) ? item.porcentaje : 0),
         0,
       );
-      suma.textContent = `Suma parcial: ${total} % · la valida la API al guardar.`;
+      suma.textContent = `Suma parcial: ${total} %`;
       suma.classList.toggle('composition-sum-ok', total === 100);
     }
 
@@ -129,7 +129,7 @@ function plantilla(datos, editando) {
           <p class="muted">
             ${editando
               ? `Modificá los datos de <strong>${escapeHtml(datos.nombre_comercial)}</strong>.`
-              : 'La composición de cepas debe sumar 100 %; la base lo valida y la API devuelve el mensaje de la regla.'}
+              : 'La composición de cepas debe sumar 100 %.'}
           </p>
         </div>
         <span class="pill">${editando ? `Vino ${escapeHtml(datos.cod_vino)}` : 'Alta'}</span>
@@ -187,7 +187,7 @@ function plantilla(datos, editando) {
 
         <fieldset class="composition-fieldset">
           <legend>Composición de cepas</legend>
-          <p class="muted">La suma debe ser exactamente 100. Si no lo es, se muestra el mensaje que devuelve la API.</p>
+          <p class="muted">La suma debe ser exactamente 100.</p>
           <div id="composicion" class="composition"></div>
           <button type="button" id="agregar-cepa" class="button button-secondary button-small">Agregar cepa</button>
           <p id="suma" class="muted composition-sum" aria-live="polite"></p>

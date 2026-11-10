@@ -201,8 +201,7 @@ function plantilla() {
         <div>
           <h1>Nueva venta</h1>
           <p class="muted">
-            Los precios, descuentos y el total los calcula la base. Si no hay stock en la sala,
-            se muestra el mensaje de la regla tal como lo devuelve la API.
+            Los precios, descuentos y el total se calculan automáticamente. Si no hay stock en la sala, se muestra el mensaje de la regla.
           </p>
         </div>
         <span class="pill">Comprobante</span>
@@ -228,7 +227,6 @@ function plantilla() {
           <label class="field">
             <span>Sala (ID)</span>
             <input name="id_sala" type="number" min="1" step="1" required />
-            <span class="field-hint">La API todavía no expone GET /salas; se ingresa el ID.</span>
           </label>
           <label class="field">
             <span>Fecha (opcional)</span>
@@ -265,7 +263,7 @@ function filaRenglon(vino) {
     <div class="renglon-row" data-cod="${vino.cod_vino}">
       <div class="renglon-vino">
         <span class="search-result-title">${escapeHtml(vino.nombre)}</span>
-        <span class="search-result-meta">#${vino.cod_vino} · ${escapeHtml(precio(vino.precio))} por unidad (precio de la API)</span>
+        <span class="search-result-meta">#${vino.cod_vino} · ${escapeHtml(precio(vino.precio))} por unidad</span>
       </div>
       <label class="field">
         <span>Cantidad</span>

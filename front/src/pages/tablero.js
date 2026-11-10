@@ -95,7 +95,7 @@ function plantilla(rango) {
       <div class="page-header">
         <div>
           <h1>Tablero</h1>
-          <p class="muted">Ranking, ventas por sala y vinos sin stock, con datos de la API.</p>
+          <p class="muted">Ranking, ventas por sala y vinos sin stock.</p>
         </div>
         <span class="pill">Reportes</span>
       </div>
@@ -113,7 +113,6 @@ function plantilla(rango) {
             <label class="field search-field">
               <span>Sala (ID)</span>
               <input name="id_sala" type="number" min="1" step="1" value="1" required />
-              <span class="field-hint">La API todavía no expone GET /salas; se ingresa el ID.</span>
             </label>
             <button class="button button-secondary" type="submit">Consultar</button>
           </form>
@@ -185,7 +184,7 @@ function grafico(filas, desde, hasta) {
   const maximo = Math.max(...filas.map((fila) => Number(fila.monto_total) || 0));
 
   return `
-    <p class="muted">Período ${periodo} · ${filas.length} fila${filas.length === 1 ? '' : 's'} devuelta${filas.length === 1 ? '' : 's'} por la API.</p>
+    <p class="muted">Período ${periodo} · ${filas.length} fila${filas.length === 1 ? '' : 's'}.</p>
     <div class="chart">
       ${filas
         .map((fila) => {
@@ -204,7 +203,7 @@ function grafico(filas, desde, hasta) {
         })
         .join('')}
     </div>
-    <p class="muted">Barras proporcionales al monto devuelto por la API; el valor no se recalcula en el cliente.</p>
+    <p class="muted">Barras proporcionales al monto; el valor no se recalcula en el cliente.</p>
   `;
 }
 

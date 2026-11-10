@@ -23,7 +23,7 @@ body {
   margin: 0;
   background: var(--crema);
   color: var(--tinta);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   line-height: 1.5;
 }
 
@@ -45,6 +45,17 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+}
+
+.nav-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  font-size: 1.4rem;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
 }
 
 .brand {
@@ -758,6 +769,27 @@ a {
 
   .topbar-inner {
     padding: 0 16px;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+  }
+
+  .topnav {
+    display: none;
+    position: absolute;
+    top: 68px;
+    left: 0;
+    right: 0;
+    background: var(--vino);
+    padding: 12px 24px;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+  }
+
+  .topnav.open {
+    display: flex;
   }
 
   .filter-actions {

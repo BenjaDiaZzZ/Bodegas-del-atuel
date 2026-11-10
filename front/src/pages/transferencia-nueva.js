@@ -210,7 +210,6 @@ function plantillaCreacion() {
         <label class="field">
           <span>Sala destino (ID)</span>
           <input name="id_sala" type="number" min="1" step="1" required />
-          <span class="field-hint">La API todavía no expone GET /salas; se ingresa el ID.</span>
         </label>
         <div class="form-actions">
           <button class="button" type="submit">Crear transferencia</button>
