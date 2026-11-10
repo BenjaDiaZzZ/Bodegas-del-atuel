@@ -40,7 +40,14 @@ la tarea no es defendible ante el docente aunque el trabajo exista.
 | T8 | Revisiones y participación P3 (0.3, 1.3, 1.9, 2.3, 2.4, 2.10, 4.2, 5.4 + apoyo Fase 7) | Parcial: reviews de P3 registrados solo en PR #1, #3, #7 (el CHANGES_REQUESTED del PR #5 fue de P2, corregido tras verificación); tareas 2.3/2.4/4.2/5.4 sin review en GitHub; 2.10 (plantilla) la hizo P1; 0.3 sin evidencia | revisiones-p3.md | `docs/informe/revisiones-p3.md` |
 | T9 | 9.2 Informe final consolidado (9 capítulos) | Hecho: 894 líneas, 9 capítulos (sección 10.2), resume los 29 informes de `docs/informe/` | informe-final.md | `docs/informe/informe-final.md` |
 | T10 | README: completar nombres P1/P3/P4 | Hecho: P1 Alejo Basile, P3 Ivan Malaniuk, P4 Benjamin Diaz | README.md | `README.md` |
-| T11 | PR sin mergear (commits + push + gh pr create) | En ejecución | — | rama `docs/informes-p3` |
+| T11 | PR sin mergear (commits + push + gh pr create) | Hecho: PR #44 abierto a main, sin mergear | — | rama `docs/informes-p3` |
+
+## Evidencia de entrega (T9–T11)
+
+- Rama: `docs/informes-p3` sobre `origin/main` (`3146b62`).
+- `a8bb4b9` — `docs(informe): agrega informes de tareas P3 e informe final consolidado (9.2)` (10 archivos, 2140 inserciones).
+- `ef4b3cd` — `docs(readme): completa nombres de P1, P3 y P4` (3 inserciones, 3 borrados).
+- PR: https://github.com/BenjaDiaZzZ/Bodegas-del-atuel/pull/44 — **abierto, sin mergear** (decisión del usuario).
 
 ## Cobertura ya existente (NO duplicar)
 
