@@ -71,5 +71,19 @@ services:
       db-init:
         condition: service_completed_successfully
 
+  front:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: bodegas_del_atuel_front
+    restart: unless-stopped
+    ports:
+      - "${FRONT_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   pgdata:
