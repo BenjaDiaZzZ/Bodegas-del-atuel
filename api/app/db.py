@@ -23,6 +23,7 @@ def build_conninfo(settings: Settings) -> str:
         dbname=settings.dbname,
         user=settings.user,
         password=settings.password,
+        sslmode=settings.sslmode,
     )
 
 
