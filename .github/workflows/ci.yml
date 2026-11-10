@@ -93,6 +93,27 @@ jobs:
       - name: Ejecutar los tests de reglas
         run: ./scripts/run_db_tests.sh --reset
 
+  front:
+    name: Front (build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Instalar dependencias del front
+        working-directory: front
+        run: npm ci
+
+      - name: Compilar el front
+        working-directory: front
+        run: npm run build
+
   api:
     name: API (pytest y compose)
     runs-on: ubuntu-latest
@@ -134,21 +155,25 @@ jobs:
           PGSUPW: ci_password
         run: python -m pytest api/tests -q
 
-      - name: Verificar docker compose (base + API)
+      - name: Verificar docker compose (base + API + front)
         run: |
           set -euo pipefail
           trap 'docker compose down -v' EXIT
           docker compose up -d --build
-          for _ in $(seq 1 90); do
-            if curl -sf http://127.0.0.1:8000/salud > salud_api.json; then
+          for _ in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:8000/salud > salud_api.json \
+               && curl -sf "http://127.0.0.1:${FRONT_PORT:-8080}/" > front.html \
+               && curl -sf "http://127.0.0.1:${FRONT_PORT:-8080}/api/salud" > salud_front.json; then
               cat salud_api.json
+              cat salud_front.json
+              grep -q 'id="app"' front.html
               docker compose ps
               exit 0
             fi
             sleep 1
           done
-          echo "La API no respondió en /salud." >&2
-          docker compose logs api >&2
+          echo "La API o el front no respondieron." >&2
+          docker compose logs api front >&2
           docker compose ps >&2
           exit 1
 
