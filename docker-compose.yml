@@ -21,5 +21,55 @@ services:
       retries: 10
       start_period: 5s
 
+  db-init:
+    image: postgres:16-alpine
+    container_name: bodegas_del_atuel_db_init
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        intentos=0
+        until psql -h db -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 <<'SQL'
+        \getenv db_password DB_PASSWORD
+        \getenv reporte_password REPORTE_RO_PASSWORD
+        ALTER ROLE app_rw WITH LOGIN PASSWORD :'db_password';
+        ALTER ROLE reporte_ro WITH LOGIN PASSWORD :'reporte_password';
+        SQL
+        do
+          intentos=$$((intentos + 1))
+          if [ "$$intentos" -ge 30 ]; then
+            echo "No se pudieron asignar las contrasenas de los roles." >&2
+            exit 1
+          fi
+          echo "Esperando a que PostgreSQL acepte conexiones..."
+          sleep 2
+        done
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: bodegas_del_atuel_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+
 volumes:
   pgdata:
