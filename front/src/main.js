@@ -3,6 +3,7 @@ import { onRouteChange, readRoute } from './router.js';
 import { renderCatalogo } from './pages/catalogo.js';
 import { renderVinoDetalle } from './pages/vino-detalle.js';
 import { renderVinoForm } from './pages/vino-form.js';
+import { renderVentaNueva } from './pages/venta-nueva.js';
 
 const outlet = document.querySelector('#app');
 let cleanup = () => {};
@@ -17,6 +18,11 @@ function render() {
 
   if (pathname === '/vinos/nuevo') {
     cleanup = renderVinoForm(outlet) || cleanup;
+    return;
+  }
+
+  if (pathname === '/ventas/nueva') {
+    cleanup = renderVentaNueva(outlet) || cleanup;
     return;
   }
 
