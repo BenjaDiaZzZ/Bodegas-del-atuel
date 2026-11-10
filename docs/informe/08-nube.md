@@ -164,4 +164,36 @@ La base y los roles están listos para que P3 despliegue la API:
 - La base está vacía: la carga de datos es la tarea 8.4 (P2).
 - El plan Free tiene `max_connections = 20`; la API debe usar un pool pequeño.
 
-**8.2 y 8.3 quedan cerradas técnicamente** contra Aiven; falta el commit/PR y la revisión correspondiente.
+**8.2 y 8.3 quedan cerradas** contra Aiven (PR #35 mergeado).
+
+## 8.4 · Datos (P2)
+
+La carga de datos en la nube está preparada como script ejecutable. **P4 lo ejecuta** con las credenciales de Aiven ya configuradas en `.env`.
+
+### Script: `scripts/seed_cloud.sh`
+
+```bash
+# Carga small (datos de desarrollo)
+scripts/seed_cloud.sh
+
+# Carga full (volumen para benchmarks, ~350k renglones)
+scripts/seed_cloud.sh --scale full
+
+# Con fecha base fija
+scripts/seed_cloud.sh --scale full --fecha-base 2026-01-01
+
+# Solo benchmark (sin cargar)
+scripts/seed_cloud.sh --benchmark
+```
+
+**Qué hace:**
+1. Lee `CLOUD_DB_*` y `BDA_OWNER_PASSWORD` de `.env`.
+2. Ejecuta `seed.py` contra Aiven con `sslmode=require` y el rol `bda_owner`.
+3. Corre `controles.sql` y muestra los resultados.
+
+**Requisitos en `.env`** (ya configurados por 8.2/8.3):
+- `CLOUD_DB_HOST`, `CLOUD_DB_PORT`, `CLOUD_DB_NAME`
+- `CLOUD_DB_SSLMODE=require`
+- `BDA_OWNER_PASSWORD`
+
+**Verificación:** después de correr el script, los controles deben mostrar 0 errores y las tablas deben tener las filas esperadas (28 tablas con datos).
