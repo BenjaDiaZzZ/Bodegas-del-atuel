@@ -19,3 +19,9 @@ export function vinosSinStock(idSala, options = {}) {
   params.set('id_sala', String(idSala));
   return api.get(`/reportes/vinos-sin-stock?${params.toString()}`, options);
 }
+
+export function stockPorSala(idSala, options = {}) {
+  const params = new URLSearchParams();
+  params.set('id_sala', String(idSala));
+  return api.get(`/reportes/stock-por-sala?${params.toString()}`, options);
+}

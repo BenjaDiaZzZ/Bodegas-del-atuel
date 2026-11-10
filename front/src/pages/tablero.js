@@ -1,4 +1,4 @@
-import { topVinos, ventasPorSala, vinosSinStock } from '../api/reportes.js';
+import { topVinos, ventasPorSala, stockPorSala } from '../api/reportes.js';
 import { htmlError } from '../utils/errors.js';
 import { escapeHtml, numero, precio } from '../utils/format.js';
 
@@ -7,6 +7,7 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 export function renderTablero(outlet) {
   const controller = new AbortController();
   const rangoInicial = rangoTrimestre();
+  let ultimosFilasStock = [];
 
   outlet.innerHTML = plantilla(rangoInicial);
 
@@ -16,6 +17,8 @@ export function renderTablero(outlet) {
   const ventasContenido = outlet.querySelector('#ventas-contenido');
   const stockEstado = outlet.querySelector('#stock-estado');
   const stockContenido = outlet.querySelector('#stock-contenido');
+  const stockSearch = outlet.querySelector('#stock-search');
+  const salasRecientesEl = outlet.querySelector('#salas-recientes');
   const rangoForm = outlet.querySelector('#rango');
   const stockForm = outlet.querySelector('#sala-form');
 
@@ -70,12 +73,16 @@ export function renderTablero(outlet) {
   }
 
   async function cargarStock(idSala) {
-    estado(stockEstado, 'Consultando vinos sin stock…');
+    estado(stockEstado, 'Consultando stock…');
     stockContenido.innerHTML = '';
     try {
-      const filas = await vinosSinStock(idSala, { signal: controller.signal });
+      const filas = await stockPorSala(idSala, { signal: controller.signal });
       estado(stockEstado, '');
-      stockContenido.innerHTML = tablaSinStock(filas, idSala);
+      ultimosFilasStock = Array.isArray(filas) ? filas : [];
+      stockContenido.innerHTML = tablaStock(ultimosFilasStock, idSala);
+      conectarBusquedaStock();
+      guardarSalaReciente(idSala);
+      renderSalasRecientes();
     } catch (error) {
       if (error.name === 'AbortError') return;
       estado(stockEstado, '');
@@ -87,6 +94,62 @@ export function renderTablero(outlet) {
     elemento.textContent = texto;
     elemento.hidden = !texto;
   }
+
+  function conectarBusquedaStock() {
+    if (!stockSearch) return;
+    stockSearch.oninput = () => {
+      const q = stockSearch.value.trim().toLowerCase();
+      if (!q) {
+        stockContenido.innerHTML = tablaStock(ultimosFilasStock, stockForm.elements.namedItem('id_sala').value);
+        return;
+      }
+      const filtradas = ultimosFilasStock.filter((f) => {
+        return (
+          String(f.nombre_comercial).toLowerCase().includes(q) ||
+          String(f.cod_vino).includes(q)
+        );
+      });
+      stockContenido.innerHTML = tablaStock(filtradas, stockForm.elements.namedItem('id_sala').value);
+    };
+  }
+
+  function guardarSalaReciente(idSala) {
+    try {
+      const key = 'tablero.salasRecientes';
+      const actuales = JSON.parse(localStorage.getItem(key) || '[]');
+      const num = String(idSala);
+      const filtradas = actuales.filter((v) => v !== num);
+      filtradas.unshift(num);
+      const nuevas = [...new Set(filtradas)].slice(0, 5);
+      localStorage.setItem(key, JSON.stringify(nuevas));
+    } catch {}
+  }
+
+  function renderSalasRecientes() {
+    if (!salasRecientesEl) return;
+    try {
+      const key = 'tablero.salasRecientes';
+      const salas = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!salas.length) {
+        salasRecientesEl.innerHTML = '';
+        return;
+      }
+      salasRecientesEl.innerHTML = `
+        <div class="muted" style="margin:8px 0 4px">Salas recientes:</div>
+        ${salas.map((s) => `
+          <button type="button" class="button button-secondary button-small" data-sala="${s}">Sala #${s}</button>
+        `).join('')}
+      `;
+      salasRecientesEl.querySelectorAll('button[data-sala]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          stockForm.elements.namedItem('id_sala').value = btn.dataset.sala;
+          cargarStock(btn.dataset.sala);
+        });
+      });
+    } catch {}
+  }
+
+  renderSalasRecientes();
 }
 
 function plantilla(rango) {
@@ -95,7 +158,7 @@ function plantilla(rango) {
       <div class="page-header">
         <div>
           <h1>Tablero</h1>
-          <p class="muted">Ranking, ventas por sala y vinos sin stock.</p>
+          <p class="muted">Ranking, ventas por sala y stock por sala.</p>
         </div>
         <span class="pill">Reportes</span>
       </div>
@@ -108,7 +171,7 @@ function plantilla(rango) {
         </section>
 
         <section class="card">
-          <h2>Vinos sin stock en una sala</h2>
+          <h2>Stock por sala</h2>
           <form id="sala-form" class="search-bar">
             <label class="field search-field">
               <span>Sala (ID)</span>
@@ -116,6 +179,8 @@ function plantilla(rango) {
             </label>
             <button class="button button-secondary" type="submit">Consultar</button>
           </form>
+          <div id="salas-recientes" class="salas-recientes"></div>
+          <input id="stock-search" class="search-input" placeholder="Buscar por nombre o código" />
           <p id="stock-estado" class="status" hidden></p>
           <div id="stock-contenido"></div>
         </section>
@@ -207,15 +272,28 @@ function grafico(filas, desde, hasta) {
   `;
 }
 
-function tablaSinStock(filas, idSala) {
+function tablaStock(filas, idSala) {
   const sala = escapeHtml(idSala);
 
   if (!Array.isArray(filas) || filas.length === 0) {
-    return `<p class="muted">Sin vinos para transferir a la sala #${sala}.</p>`;
+    return `<p class="muted">Sin vinos con stock en depósito para la sala #${sala}.</p>`;
   }
 
+  const conStock = filas.filter(f => Number(f.stock_sala) > 0);
+  const sinStock = filas.filter(f => Number(f.stock_sala) === 0);
+
+  const renderFilas = (lista) => lista.map(
+    (fila) => `
+      <tr>
+        <td>${escapeHtml(fila.nombre_comercial)} <span class="muted">#${fila.cod_vino}</span></td>
+        <td class="num">${escapeHtml(numero(fila.stock_sala))}</td>
+        <td class="num">${escapeHtml(numero(fila.stock_deposito))}</td>
+      </tr>
+    `
+  ).join('');
+
   return `
-    <p class="muted">Sala #${sala} · ${filas.length} vino${filas.length === 1 ? '' : 's'} con stock en depósito y sin stock en la sala.</p>
+    <p class="muted">Sala #${sala} · ${filas.length} vino${filas.length === 1 ? '' : 's'} con stock en depósito. Con stock en sala: ${conStock.length}, Sin stock: ${sinStock.length}.</p>
     <div class="table-wrap">
       <table class="table">
         <thead>
@@ -226,17 +304,14 @@ function tablaSinStock(filas, idSala) {
           </tr>
         </thead>
         <tbody>
-          ${filas
-            .map(
-              (fila) => `
-                <tr>
-                  <td>${escapeHtml(fila.nombre_comercial)} <span class="muted">#${fila.cod_vino}</span></td>
-                  <td class="num">${escapeHtml(numero(fila.stock_sala))}</td>
-                  <td class="num">${escapeHtml(numero(fila.stock_deposito))}</td>
-                </tr>
-              `,
-            )
-            .join('')}
+          ${renderFilas(conStock)}
+          ${sinStock.map(f => `
+            <tr style="opacity:0.6">
+              <td>${escapeHtml(f.nombre_comercial)} <span class="muted">#${f.cod_vino}</span></td>
+              <td class="num">${escapeHtml(numero(f.stock_sala))}</td>
+              <td class="num">${escapeHtml(numero(f.stock_deposito))}</td>
+            </tr>
+          `).join('')}
         </tbody>
       </table>
     </div>

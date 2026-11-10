@@ -153,6 +153,12 @@ class VinoSinStock(BaseModel):
     stock_sala: int
     stock_deposito: int
 
+class StockPorSala(BaseModel):
+    cod_vino: int
+    nombre_comercial: str
+    stock_sala: int
+    stock_deposito: int
+
 
 class TransportistaActivo(BaseModel):
     id_transportista: int

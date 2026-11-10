@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, Request
 from ..errors import DatabaseHttpError
 from ..repos import reportes as repo_reportes
 from ..schemas import (
+    StockPorSala,
     TopVino,
     TransportistaActivo,
     VentaMensualSala,
@@ -68,6 +69,16 @@ def reporte_vinos_sin_stock(request: Request, id_sala: int) -> list[VinoSinStock
     """Return the wines with stock in deposito but none in the sala (S6)."""
     filas = repo_reportes.vinos_sin_stock(request.app.state.pool, id_sala)
     return [VinoSinStock.model_validate(fila) for fila in filas]
+
+@router.get(
+    "/reportes/stock-por-sala",
+    operation_id="reporteStockPorSala",
+    response_model=list[StockPorSala],
+)
+def reporte_stock_por_sala(request: Request, id_sala: int) -> list[StockPorSala]:
+    """Return stock in deposito and sala for all wines with deposito stock."""
+    filas = repo_reportes.stock_por_sala(request.app.state.pool, id_sala)
+    return [StockPorSala.model_validate(fila) for fila in filas]
 
 
 @router.get(
