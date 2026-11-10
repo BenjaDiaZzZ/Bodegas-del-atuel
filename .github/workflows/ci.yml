@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -93,6 +92,65 @@ jobs:
 
       - name: Ejecutar los tests de reglas
         run: ./scripts/run_db_tests.sh --reset
+
+  api:
+    name: API (pytest y compose)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar el .env de CI
+        run: |
+          cat > .env <<'ENV'
+          POSTGRES_USER=bodegas
+          POSTGRES_PASSWORD=ci_password
+          POSTGRES_DB=bodegas_del_atuel
+          POSTGRES_PORT=5432
+          DB_PASSWORD=ci_app_password
+          REPORTE_RO_PASSWORD=ci_reporte_password
+          ENV
+
+      - name: Recrear la base
+        run: ./scripts/reset_db.sh
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias de la API
+        run: pip install -r api/requirements.txt
+
+      - name: Ejecutar los tests de la API
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: bodegas_del_atuel
+          DB_USER: app_rw
+          DB_PASSWORD: ci_app_password
+          PGSU: bodegas
+          PGSUPW: ci_password
+        run: python -m pytest api/tests -q
+
+      - name: Verificar docker compose (base + API)
+        run: |
+          set -euo pipefail
+          trap 'docker compose down -v' EXIT
+          docker compose up -d --build
+          for _ in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:8000/salud > salud_api.json; then
+              cat salud_api.json
+              docker compose ps
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "La API no respondió en /salud." >&2
+          docker compose logs api >&2
+          docker compose ps >&2
+          exit 1
 
   contrato:
     name: Contrato OpenAPI y mock
