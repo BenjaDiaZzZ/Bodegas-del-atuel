@@ -5,6 +5,7 @@ import { renderVinoDetalle } from './pages/vino-detalle.js';
 import { renderVinoForm } from './pages/vino-form.js';
 import { renderVentaNueva } from './pages/venta-nueva.js';
 import { renderTransferenciaNueva } from './pages/transferencia-nueva.js';
+import { renderTablero } from './pages/tablero.js';
 
 const outlet = document.querySelector('#app');
 let cleanup = () => {};
@@ -29,6 +30,11 @@ function render() {
 
   if (pathname === '/transferencias/nueva') {
     cleanup = renderTransferenciaNueva(outlet) || cleanup;
+    return;
+  }
+
+  if (pathname === '/tablero') {
+    cleanup = renderTablero(outlet) || cleanup;
     return;
   }
 
