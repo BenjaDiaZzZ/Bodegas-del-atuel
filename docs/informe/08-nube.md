@@ -208,3 +208,66 @@ Salida resumida de controles:
 Controles 2–6: 0 errores. No hay filas huérfanas, stocks negativos, totales inconsistentes, composición ≠100 ni estados inválidos.
 
 **Nota sobre idempotencia:** `seed.py` no trunca tablas; una segunda ejecución sin limpiar genera conflictos de clave primaria. Durante las pruebas se necesitó `TRUNCATE ... CASCADE` para evitar duplicados. El script `seed_cloud.sh` ahora limpia automáticamente antes de cargar por defecto. Si se desea preservar datos existentes, usar `--no-clean`.
+
+## 8.5 · Despliegue de la API — prueba local contra Aiven
+
+Prueba realizada el 10 de noviembre de 2026 ejecutando la API en Docker local contra la base de Aiven PostgreSQL 18.6 con `POSTGRES_SSLMODE=require`.
+
+**Construcción:**
+```bash
+docker build -f api/Dockerfile -t bodegas-api-test .
+```
+
+**Ejecución:**
+```bash
+docker run -d -p 8002:8000 --env-file /tmp/api.env bodegas-api-test
+```
+Variables usadas: `POSTGRES_HOST=pg-771ac87-bodegas-del-atuel.f.aivencloud.com`, `POSTGRES_PORT=25982`, `POSTGRES_DB=bodegas_del_atuel`, `DB_USER=app_rw`, `POSTGRES_SSLMODE=require`.
+
+**Resultados:**
+- `GET /salud` → `{"status":"ok","db":true,"version":"PostgreSQL 18.6",...}` 200 OK.
+- Conexión SSL establecida, pool con `max_size=5`.
+- Consulta de catálogo `GET /vinos?limit=1` devuelve datos de la carga 8.4.
+- Sin errores de autenticación ni SSL.
+
+La API conectada como `app_rw` funciona correctamente contra Aiven con SSL y la carga de datos existente.
+
+### Desarrollo local con Docker Compose
+
+A partir de la demanda de ejecutar proyecto localmente con base en Aiven, se definió un flujo 100% Docker para API + Front conectando a Aiven.
+
+**Archivos**
+- `docker-compose.local.yml`: servicios `api` y `front`. API se construye desde `api/Dockerfile` y conecta a Aiven con `POSTGRES_SSLMODE=require`. Front se construye desde `front/Dockerfile` con `VITE_API_URL=/api` y Nginx hace proxy a `http://api:8000`.
+- `.env.local.example`: plantilla con variables requeridas para Aiven.
+- `front/nginx.conf`: resolver dinámico para `api` dentro de Docker.
+
+**Variables `.env.local`**
+```
+POSTGRES_HOST=142.93.23.234
+POSTGRES_PORT=25982
+POSTGRES_DB=bodegas_del_atuel
+DB_PASSWORD=...
+POSTGRES_SSLMODE=require
+```
+El archivo `.env.local` no se commitea.
+
+**Comandos**
+```bash
+cp .env.local.example .env.local
+# completar .env.local con credenciales reales
+docker compose -f docker-compose.local.yml up -d --build
+```
+Servicios:
+- API: http://localhost:8000
+- Front: http://localhost:8080
+Proxy: `http://localhost:8080/api/*` → API.
+
+**Pruebas**
+- `curl http://localhost:8000/salud` → `{"status":"ok","db":true,"version":"PostgreSQL 18.6"}`
+- `curl http://localhost:8080/api/salud` → mismo resultado a través del proxy de Nginx.
+- Front sirve aplicación compilada y conecta a la API vía `/api`.
+
+**Escalado a otros devs**
+Cada desarrollador debe tener su IP pública en el `ip_filter` de Aiven Service settings → Cloud and network → Set IP address allowlist. Con la IP autorizada, cada uno puede levantar el compose local con sus propias variables.
+
+Queda pendiente el despliegue en servidor con IP fija y actualización del `ip_filter` para producción, y el despliegue del front en Vercel 8.6.
