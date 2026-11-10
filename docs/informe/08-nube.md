@@ -197,3 +197,14 @@ scripts/seed_cloud.sh --benchmark
 - `BDA_OWNER_PASSWORD`
 
 **Verificación:** después de correr el script, los controles deben mostrar 0 errores y las tablas deben tener las filas esperadas (28 tablas con datos).
+
+### Ejecución real 10 de noviembre de 2026
+
+Se ejecutó la carga en Aiven PostgreSQL 18.6 con `scripts/seed_cloud.sh --scale small` tras `TRUNCATE ... CASCADE` de las tablas de datos. El script ahora limpia automáticamente antes de cargar cuando se usa el flag por defecto `--clean`.
+
+Salida resumida de controles:
+- `conteo:localidad` 18, `conteo:cepa` 12, `conteo:maridaje` 8, `conteo:bodega` 5, `conteo:transportista` 5, `conteo:finca` 3, `conteo:sala` 4, `conteo:empleado` 10, `conteo:parcela` 7, `conteo:vino` 26, `conteo:cliente` 15, `conteo:lote_uva` 10, `conteo:composicion` 67, `conteo:vino_maridaje` 49, `conteo:socio` 7, `conteo:distribuidor` 4, `conteo:exportador` 4, `conteo:permiso_exportacion` 14, `conteo:transportista_localidad` 15, `conteo:analisis_calidad` 10, `conteo:comprobante` 50, `conteo:renglon_comprobante` 151, `conteo:ingreso` 20, `conteo:renglon_ingreso` 53, `conteo:transferencia` 15, `conteo:renglon_transferencia` 39, `conteo:stock_deposito` 26, `conteo:stock_sala` 40.
+
+Controles 2–6: 0 errores. No hay filas huérfanas, stocks negativos, totales inconsistentes, composición ≠100 ni estados inválidos.
+
+**Nota sobre idempotencia:** `seed.py` no trunca tablas; una segunda ejecución sin limpiar genera conflictos de clave primaria. Durante las pruebas se necesitó `TRUNCATE ... CASCADE` para evitar duplicados. El script `seed_cloud.sh` ahora limpia automáticamente antes de cargar por defecto. Si se desea preservar datos existentes, usar `--no-clean`.

@@ -11,9 +11,10 @@
 #   BDA_OWNER_PASSWORD
 #
 # Uso:
-#   scripts/seed_cloud.sh                    # scale small, fecha-base hoy
+#   scripts/seed_cloud.sh                    # scale small, fecha-base hoy, limpia antes
 #   scripts/seed_cloud.sh --scale full       # volumen completo
 #   scripts/seed_cloud.sh --fecha-base 2026-01-01
+#   scripts/seed_cloud.sh --no-clean         # no limpia antes de cargar
 #   scripts/seed_cloud.sh --benchmark        # solo benchmark, sin carga
 #
 # IMPORTANTE: ejecutar con las credenciales reales en .env. El script
@@ -37,12 +38,15 @@ fi
 SCALE="small"
 FECHA_BASE="$(date +%Y-%m-%d)"
 BENCHMARK=""
+CLEAN="true"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --scale)      SCALE="$2"; shift 2 ;;
         --fecha-base) FECHA_BASE="$2"; shift 2 ;;
         --benchmark)  BENCHMARK="--benchmark"; shift ;;
+        --clean)      CLEAN="true"; shift ;;
+        --no-clean)   CLEAN="false"; shift ;;
         -h|--help)    sed -n '3,20p' "$0"; exit 0 ;;
         *) echo "Opción desconocida: $1" >&2; exit 1 ;;
     esac
@@ -64,6 +68,13 @@ PYTHON="${ROOT_DIR}/.venv/bin/python"
 
 echo "== Seed cloud: bda_owner@${CLOUD_DB_HOST}:${CLOUD_DB_PORT}/${CLOUD_DB_NAME} =="
 echo "== Scale: ${SCALE} | Fecha base: ${FECHA_BASE} =="
+
+if [[ -z "$BENCHMARK" && "$CLEAN" == "true" ]]; then
+    echo "== Limpiando tablas antes de cargar =="
+    PGPASSWORD="$BDA_OWNER_PASSWORD" PGSSLMODE="$CLOUD_DB_SSLMODE" \
+        psql -h "$CLOUD_DB_HOST" -p "$CLOUD_DB_PORT" -U bda_owner -d "$CLOUD_DB_NAME" \
+        -c "TRUNCATE TABLE public.analisis_calidad, public.auditoria_precio, public.bodega, public.cepa, public.cliente, public.composicion, public.comprobante, public.distribuidor, public.empleado, public.exportador, public.finca, public.ingreso, public.localidad, public.lote_uva, public.maridaje, public.parcela, public.permiso_exportacion, public.renglon_comprobante, public.renglon_ingreso, public.renglon_transferencia, public.sala, public.socio, public.stock_deposito, public.stock_sala, public.transferencia, public.transportista, public.transportista_localidad, public.vino, public.vino_maridaje CASCADE;"
+fi
 
 "$PYTHON" "${ROOT_DIR}/db/seed/seed.py" \
     --scale "$SCALE" \
