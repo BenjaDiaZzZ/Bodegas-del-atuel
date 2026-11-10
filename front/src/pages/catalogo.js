@@ -118,6 +118,7 @@ function plantilla(filtros) {
       <div class="page-actions">
         <a class="button" href="#/vinos/nuevo">Nuevo vino</a>
         <a class="button button-secondary" href="#/ventas/nueva">Nueva venta</a>
+        <a class="button button-secondary" href="#/transferencias/nueva">Transferencias</a>
       </div>
 
       <form id="filtros" class="filters" role="search">
