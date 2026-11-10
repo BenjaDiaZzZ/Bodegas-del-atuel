@@ -10,6 +10,22 @@ import { renderTablero } from './pages/tablero.js';
 const outlet = document.querySelector('#app');
 let cleanup = () => {};
 
+// Menú responsive
+const navToggle = document.querySelector('.nav-toggle');
+const topnav = document.querySelector('.topnav');
+if (navToggle && topnav) {
+  navToggle.addEventListener('click', () => {
+    const abierto = topnav.classList.toggle('open');
+    navToggle.setAttribute('aria-expanded', String(abierto));
+  });
+  topnav.addEventListener('click', (e) => {
+    if (e.target.tagName === 'A') {
+      topnav.classList.remove('open');
+      navToggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
 function render() {
   cleanup();
   cleanup = () => {};
