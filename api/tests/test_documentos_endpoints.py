@@ -10,7 +10,6 @@ with a superuser connection. Mirrors ``test_comprobantes_endpoints.py``.
 
 import os
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import psycopg
@@ -217,8 +216,15 @@ def _estado_transferencia_de(pool, nro_solicitud):
     return fila["estado"] if fila else None
 
 
-def _hoy_iso():
-    return date.today().isoformat()
+def _fecha_db(pool):
+    """CURRENT_DATE de PostgreSQL (UTC): la expectativa no depende del reloj ni la TZ del runner.
+
+    Fija ``dict_row`` en la conexión: el row_factory puede persistir en
+    conexiones reusadas del pool y esta consulta no debe depender de él.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute("SELECT CURRENT_DATE AS fecha").fetchone()["fecha"]
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +232,7 @@ def _hoy_iso():
 # ---------------------------------------------------------------------------
 
 
-def test_crear_transferencia_201_fecha_forzada_por_la_base(client, escenario):
+def test_crear_transferencia_201_fecha_forzada_por_la_base(client, pool, escenario):
     # The body never carries fecha_confeccion: even if a client sneaks one in,
     # the trigger T5 (RN-11) forces CURRENT_DATE and Pydantic drops the extra.
     response = client.post(
@@ -239,7 +245,7 @@ def test_crear_transferencia_201_fecha_forzada_por_la_base(client, escenario):
     assert set(body) == TRANSFERENCIA_KEYS
     assert body["nro_solicitud"] > 0
     assert body["id_sala"] == escenario["id_sala"]
-    assert body["fecha_confeccion"] == _hoy_iso()
+    assert body["fecha_confeccion"] == _fecha_db(pool).isoformat()
     assert body["estado"] == "en_confeccion"
     assert body["renglones"] == []
 
@@ -493,7 +499,7 @@ def test_crear_transferencia_cuerpo_invalido_400_validation_error(client):
 # ---------------------------------------------------------------------------
 
 
-def test_crear_ingreso_201_fecha_por_defecto_de_la_base(client, escenario):
+def test_crear_ingreso_201_fecha_por_defecto_de_la_base(client, pool, escenario):
     response = client.post(
         "/ingresos",
         json={
@@ -509,7 +515,7 @@ def test_crear_ingreso_201_fecha_por_defecto_de_la_base(client, escenario):
     assert body["id_transportista"] == escenario["id_transportista"]
     assert body["cuit_bodega"] == BODEGA_CUIT
     # No fecha sent: the INSERT's COALESCE used CURRENT_DATE.
-    assert body["fecha"] == _hoy_iso()
+    assert body["fecha"] == _fecha_db(pool).isoformat()
     assert body["estado"] == "en_confeccion"
     assert body["renglones"] == []
 

@@ -8,7 +8,6 @@ repository functions only.
 
 import os
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import psycopg
@@ -159,6 +158,17 @@ def _stock_sala_de(pool, id_sala, cod_vino):
     return fila["cantidad"] if fila else None
 
 
+def _fecha_db(pool):
+    """CURRENT_DATE de PostgreSQL (UTC): la expectativa no depende del reloj ni la TZ del runner.
+
+    Fija ``dict_row`` en la conexión: el row_factory puede persistir en
+    conexiones reusadas del pool y esta consulta no debe depender de él.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute("SELECT CURRENT_DATE AS fecha").fetchone()["fecha"]
+
+
 def test_transferencia_flujo_completo(pool, escenario):
     vino_a = _crear_vino(pool, escenario, "tr flujo")
     su = _superuser()
@@ -172,7 +182,7 @@ def test_transferencia_flujo_completo(pool, escenario):
     assert cabecera["nro_solicitud"] > 0
     assert cabecera["id_sala"] == escenario["id_sala"]
     assert cabecera["estado"] == "en_confeccion"
-    assert cabecera["fecha_confeccion"] == date.today()
+    assert cabecera["fecha_confeccion"] == _fecha_db(pool)
     assert cabecera["renglones"] == []
 
     con_renglon = transferencias.agregar_renglon_transferencia(
@@ -301,7 +311,7 @@ def test_ingreso_flujo_completo(pool, escenario):
     assert cabecera["id_transportista"] == escenario["id_transportista"]
     assert cabecera["cuit_bodega"] == BODEGA_CUIT
     assert cabecera["estado"] == "en_confeccion"
-    assert cabecera["fecha"] == date.today()
+    assert cabecera["fecha"] == _fecha_db(pool)
     assert cabecera["renglones"] == []
 
     con_renglones = ingresos.agregar_renglon_ingreso(

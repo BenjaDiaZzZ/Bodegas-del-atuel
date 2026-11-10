@@ -431,6 +431,33 @@ def test_crear_vino_check_422_y_validacion_400_son_distintos(client, catalogo):
     assert body["codigo"] == "VALIDATION_ERROR"
 
 
+def test_crear_vino_precio_negativo_422(client, catalogo):
+    response = client.post(
+        "/vinos",
+        json=_cuerpo_crear(catalogo, f"Tinto Precio Negativo {_TAIL}", extra={"precio_venta": -1.0}),
+    )
+
+    # Enforced by ck_vino_precio_venta in the database, not the framework.
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert set(body) == ERROR_KEYS
+    assert body["codigo"] == "23514"
+
+
+def test_actualizar_vino_precio_negativo_422(client, vino_escritura):
+    cod = vino_escritura["cod_vino"]
+    precio_anterior = client.get(f"/vinos/{cod}").json()["precio_venta"]
+
+    response = client.put(f"/vinos/{cod}", json={"precio_venta": -1.0})
+
+    # The CHECK rejects the UPDATE (23514 -> 422) and nothing changes.
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert set(body) == ERROR_KEYS
+    assert body["codigo"] == "23514"
+    assert client.get(f"/vinos/{cod}").json()["precio_venta"] == precio_anterior
+
+
 def test_actualizar_vino_200_actualiza_solo_lo_enviado(client, vino_escritura, catalogo):
     cod = vino_escritura["cod_vino"]
     response = client.put(

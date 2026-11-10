@@ -95,6 +95,17 @@ def _crear_cliente(pool, localidades, nro, *, tipo="socio", extra=None, permisos
     return clientes.crear_cliente(pool, **datos)
 
 
+def _fecha_db(pool):
+    """CURRENT_DATE de PostgreSQL (UTC): la expectativa no depende del reloj ni la TZ del runner.
+
+    Fija ``dict_row`` en la conexión: el row_factory puede persistir en
+    conexiones reusadas del pool y esta consulta no debe depender de él.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute("SELECT CURRENT_DATE AS fecha").fetchone()["fecha"]
+
+
 def test_crear_y_obtener_socio(pool, localidades):
     creado = _crear_cliente(pool, localidades, 1)
 
@@ -103,7 +114,7 @@ def test_crear_y_obtener_socio(pool, localidades):
     assert creado["tipo"] == "socio"
     assert creado["descuento"] == Decimal("10.00")
     assert creado["localidad"].startswith("Localidad repo")
-    assert creado["fecha_alta"] == date.today()
+    assert creado["fecha_alta"] == _fecha_db(pool)
     assert creado["zona_cobertura"] is None
     assert creado["nro_habilitacion"] is None
     assert creado["pais_destino_principal"] is None

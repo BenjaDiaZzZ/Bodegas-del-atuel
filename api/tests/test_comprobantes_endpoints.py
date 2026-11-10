@@ -11,7 +11,6 @@ superuser connection. Mirrors ``test_clientes_endpoints.py``.
 
 import os
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import psycopg
@@ -192,6 +191,17 @@ def _comprobantes_de(pool, id_cliente):
 # ---------------------------------------------------------------------------
 
 
+def _fecha_db(pool):
+    """CURRENT_DATE de PostgreSQL (UTC): la expectativa no depende del reloj ni la TZ del runner.
+
+    Fija ``dict_row`` en la conexión: el row_factory puede persistir en
+    conexiones reusadas del pool y esta consulta no debe depender de él.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute("SELECT CURRENT_DATE AS fecha").fetchone()["fecha"]
+
+
 def test_crear_comprobante_201_renglones_ordenados_y_totales_de_la_base(client, pool, escenario):
     # CREATED FIRST -> smaller cod_vino; sent in REVERSE order on purpose.
     vino_menor = _crear_vino(pool, escenario, "ordenado menor")
@@ -221,7 +231,7 @@ def test_crear_comprobante_201_renglones_ordenados_y_totales_de_la_base(client, 
     body = response.json()
     assert set(body) == COMPROBANTE_KEYS
     assert body["nro_comprobante"] > 0
-    assert body["fecha"] == date.today().isoformat()
+    assert body["fecha"] == _fecha_db(pool).isoformat()
     assert body["id_cliente"] == cliente["id_cliente"]
     assert body["id_sala"] == escenario["id_sala"]
 

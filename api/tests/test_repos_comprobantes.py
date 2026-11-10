@@ -7,7 +7,6 @@ operation goes through the repository functions only.
 
 import os
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import psycopg
@@ -147,6 +146,17 @@ def _stock_de(pool, id_sala, cod_vino):
         ).fetchone()["cantidad"]
 
 
+def _fecha_db(pool):
+    """CURRENT_DATE de PostgreSQL (UTC): la expectativa no depende del reloj ni la TZ del runner.
+
+    Fija ``dict_row`` en la conexión: el row_factory puede persistir en
+    conexiones reusadas del pool y esta consulta no debe depender de él.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute("SELECT CURRENT_DATE AS fecha").fetchone()["fecha"]
+
+
 def test_crear_comprobante_renglones_ordenados_y_totales(pool, escenario):
     vino_mayor = _crear_vino(pool, escenario, "ordenado mayor")
     vino_menor = _crear_vino(pool, escenario, "ordenado menor")
@@ -171,7 +181,7 @@ def test_crear_comprobante_renglones_ordenados_y_totales(pool, escenario):
     )
 
     assert creado["nro_comprobante"] > 0
-    assert creado["fecha"] == date.today()
+    assert creado["fecha"] == _fecha_db(pool)
     assert creado["id_cliente"] == cliente["id_cliente"]
     assert creado["id_sala"] == escenario["id_sala"]
 
