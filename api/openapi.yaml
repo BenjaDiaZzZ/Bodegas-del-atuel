@@ -318,6 +318,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /comprobantes:
     post:
@@ -795,6 +797,11 @@ components:
       enum: [socio, distribuidor, exportador]
       example: socio
 
+    TipoDocumento:
+      type: string
+      enum: [DNI, CUIT, CUIL, PASAPORTE, LE, LC]
+      example: DNI
+
     EstadoDocumento:
       type: string
       enum: [en_confeccion, terminado, procesado]
@@ -873,6 +880,7 @@ components:
           type: number
           format: float
           minimum: 0
+          exclusiveMinimum: true
           maximum: 100
           example: 85.00
 
@@ -891,6 +899,8 @@ components:
           type: number
           format: float
           readOnly: true
+          minimum: 0
+          maximum: 30
           example: 17.0
 
     StockVino:
@@ -930,13 +940,18 @@ components:
           $ref: '#/components/schemas/TipoVino'
         anada:
           type: integer
+          minimum: 1990
+          maximum: 2100
           example: 2021
         presentacion_ml:
           type: integer
+          enum: [187, 375, 750, 1500, 3000]
           example: 750
         graduacion:
           type: number
           format: float
+          minimum: 5
+          maximum: 20
           example: 14.0
         precio_venta:
           type: number
@@ -987,10 +1002,12 @@ components:
           $ref: '#/components/schemas/TipoVino'
         anada:
           type: integer
+          minimum: 1990
+          maximum: 2100
           example: 2021
         presentacion_ml:
           type: integer
-          enum: [375, 750, 1500]
+          enum: [187, 375, 750, 1500, 3000]
           example: 750
         graduacion:
           type: number
@@ -1023,6 +1040,7 @@ components:
                 type: number
                 format: float
                 minimum: 0
+                exclusiveMinimum: true
                 maximum: 100
                 example: 85.0
         maridajes:
@@ -1042,8 +1060,11 @@ components:
           $ref: '#/components/schemas/TipoVino'
         anada:
           type: integer
+          minimum: 1990
+          maximum: 2100
         presentacion_ml:
           type: integer
+          enum: [187, 375, 750, 1500, 3000]
         graduacion:
           type: number
           format: float
@@ -1070,6 +1091,7 @@ components:
                 type: number
                 format: float
                 minimum: 0
+                exclusiveMinimum: true
                 maximum: 100
         maridajes:
           type: array
@@ -1127,9 +1149,7 @@ components:
         tipo:
           $ref: '#/components/schemas/TipoCliente'
         tipo_documento:
-          type: string
-          maxLength: 10
-          example: DNI
+          $ref: '#/components/schemas/TipoDocumento'
         nro_documento:
           type: string
           maxLength: 20
@@ -1153,6 +1173,8 @@ components:
           type: number
           format: float
           readOnly: true
+          minimum: 0
+          maximum: 100
           description: Porcentaje generado por la base a partir de tipo (R-002); ignorado en escrituras.
           example: 10.0
 
@@ -1189,6 +1211,7 @@ components:
         - tipo
         - tipo_documento
         - nro_documento
+        - direccion
         - id_localidad
       properties:
         nombre:
@@ -1198,9 +1221,7 @@ components:
         tipo:
           $ref: '#/components/schemas/TipoCliente'
         tipo_documento:
-          type: string
-          maxLength: 10
-          example: DNI
+          $ref: '#/components/schemas/TipoDocumento'
         nro_documento:
           type: string
           maxLength: 20
@@ -1242,8 +1263,7 @@ components:
           type: string
           maxLength: 120
         tipo_documento:
-          type: string
-          maxLength: 10
+          $ref: '#/components/schemas/TipoDocumento'
         nro_documento:
           type: string
           maxLength: 20
@@ -1321,6 +1341,7 @@ components:
           example: Malbec Reserva
         cantidad:
           type: integer
+          minimum: 1
           example: 3
         precio_unitario:
           type: number
@@ -1409,6 +1430,7 @@ components:
           example: Malbec Reserva
         cantidad:
           type: integer
+          minimum: 1
           example: 120
 
     TransferenciaCreate:
