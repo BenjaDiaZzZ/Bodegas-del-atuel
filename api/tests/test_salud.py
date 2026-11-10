@@ -38,6 +38,7 @@ def test_salud_returns_503_when_database_is_unreachable(monkeypatch):
         dbname="bodegas_del_atuel",
         user="app_rw",
         password="not-a-real-password",
+        sslmode="prefer",
     )
 
     with TestClient(main.create_app(settings)) as test_client:
@@ -79,6 +80,7 @@ def test_salud_reports_internal_defect_as_500_not_503(monkeypatch):
         dbname="defecto-not-used",
         user="app_rw",
         password="not-used",
+        sslmode="prefer",
     )
 
     with TestClient(main.create_app(settings), raise_server_exceptions=False) as test_client:

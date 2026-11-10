@@ -9,7 +9,8 @@ viven en la base (triggers, columnas generadas y procedimientos).
 - Rama de trabajo: `feature/p3-api-fase6`, creada sobre `origin/main` (`0e7b0b8`).
 - Alcance autorizado: `api/`, `db/tests/` (solo tests de API), `consultas/delete.sql`
   y este archivo. No se modifican migraciones, seeds, `docker-compose.yml`,
-  `scripts/`, `front/`, `README` ni `.env.example`.
+  `scripts/`, `front/` ni `README`. (`.env.example` se actualizó luego con
+  `POSTGRES_SSLMODE`, por autorización expresa para el despliegue en Aiven.)
 - Verificación: base efímera PostgreSQL 16 (contenedor propio, sin credenciales
   de `.env`), migraciones existentes aplicadas en orden con `ON_ERROR_STOP=1`
   y sin alterar sus archivos.
@@ -105,15 +106,26 @@ con el rol `app_rw` mediante variables de entorno, y `GET /salud` ejecutando un
 | `POSTGRES_DB` | — | sí | Base de datos |
 | `DB_USER` | `app_rw` | no | Rol de aplicación (nunca el propietario) |
 | `DB_PASSWORD` | — | sí | Contraseña de `app_rw` (misma variable que usa `scripts/set_role_passwords.sh`) |
+| `POSTGRES_SSLMODE` | `prefer` | no | Modo SSL (libpq) de la conexión de la API; usar `require` en el despliegue en Aiven |
 
-`.env.example` está fuera del alcance autorizado de esta entrega, por lo que no
-se editó. **Propuesta de incorporación** (para quien tenga el archivo a cargo):
+Para el despliegue en Aiven (producción), la API debe conectarse con
+`POSTGRES_SSLMODE=require` usando el rol `app_rw`; en local o Docker sin SSL se
+mantiene el default `prefer`, que no rompe PostgreSQL local.
+
+`.env.example` quedó fuera del alcance autorizado de la entrega de la fase 6.
+Posteriormente se incorporó `POSTGRES_SSLMODE` al archivo (ver bloque abajo),
+con autorización expresa para el despliegue en Aiven. Siguen **pendientes**
+`POSTGRES_HOST` y `DB_USER` (propuesta para quien tenga el archivo a cargo):
 
 ```dotenv
 # Host de PostgreSQL para la API (default: localhost).
 POSTGRES_HOST=localhost
 # Rol de aplicación de privilegios limitados que usa la API (default: app_rw).
 DB_USER=app_rw
+# Modo SSL de la conexión de la API (libpq). Default: prefer, compatible con
+# PostgreSQL local sin SSL. En el despliegue en Aiven (producción) usar:
+# POSTGRES_SSLMODE=require
+POSTGRES_SSLMODE=prefer
 ```
 
 ### Decisiones

@@ -28,6 +28,7 @@ def client():
         dbname="stub_tests",
         user="app_rw",
         password="stub-not-used",
+        sslmode="prefer",
     )
     with TestClient(main.create_app(settings)) as test_client:
         yield test_client
