@@ -11,11 +11,23 @@ export class ApiError extends Error {
   }
 }
 
-async function pedir(path, { signal } = {}) {
+async function pedir(path, { signal, method = 'GET', body } = {}) {
+  const headers = { Accept: 'application/json' };
+  let cuerpo;
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    cuerpo = JSON.stringify(body);
+  }
+
   const respuesta = await fetch(`${baseUrl}${path}`, {
-    headers: { Accept: 'application/json' },
+    method,
+    headers,
+    body: cuerpo,
     signal,
   });
+
+  if (respuesta.status === 204) return null;
 
   const texto = await respuesta.text();
   let datos = null;
@@ -36,4 +48,6 @@ async function pedir(path, { signal } = {}) {
 
 export const api = {
   get: pedir,
+  post: (path, body, options = {}) => pedir(path, { ...options, method: 'POST', body }),
+  put: (path, body, options = {}) => pedir(path, { ...options, method: 'PUT', body }),
 };
