@@ -19,3 +19,11 @@ export function listarVinos(
 export function obtenerVino(codVino, options = {}) {
   return api.get(`/vinos/${encodeURIComponent(codVino)}`, options);
 }
+
+export function crearVino(datos, options = {}) {
+  return api.post('/vinos', datos, options);
+}
+
+export function actualizarVino(codVino, datos, options = {}) {
+  return api.put(`/vinos/${encodeURIComponent(codVino)}`, datos, options);
+}

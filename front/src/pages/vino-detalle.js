@@ -47,6 +47,7 @@ function plantilla(vino) {
         <div class="price-box">
           <span class="price-label">Precio de venta</span>
           <span class="price">${escapeHtml(precio(vino.precio_venta))}</span>
+          <a class="button button-small" href="#/vinos/${encodeURIComponent(vino.cod_vino)}/editar">Editar vino</a>
         </div>
       </div>
 

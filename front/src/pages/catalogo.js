@@ -115,6 +115,10 @@ function plantilla(filtros) {
         <span class="pill">Datos de la API</span>
       </div>
 
+      <div class="page-actions">
+        <a class="button" href="#/vinos/nuevo">Nuevo vino</a>
+      </div>
+
       <form id="filtros" class="filters" role="search">
         <label class="field">
           <span>Nombre</span>
