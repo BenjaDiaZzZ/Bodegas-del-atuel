@@ -57,3 +57,111 @@ Fuentes oficiales:
 - **8.5:** la API se despliega en el servidor virtual con IP estática; esa IP es la única habilitada en el `ip_filter` de Aiven.
 - **8.6:** el front puede ir en un hosting estático con HTTPS y CORS limitado al dominio público del front.
 - **8.8:** el backup se genera con `pg_dump` y se restaura en una base nueva; en Aiven Free solo hay un backup automático, así que conviene guardar un dump propio antes de la defensa.
+
+## Re-verificación para ejecutar 8.1 (9 de noviembre de 2026)
+
+Se volvieron a consultar las páginas oficiales antes de ejecutar la tarea:
+
+- La página del plan Free de Aiven (actualizada el 8/sep/2026) confirma: sin tarjeta, sin límite de tiempo, 1 CPU, 1 GB RAM, 1 GB de disco, backups, `max_connections = 20`, sin VPC, sin IP estática, sin pooling y un solo servicio de cada tipo por organización. También puede apagarse por inactividad, con aviso y posterior encendido manual.
+- La página de restricción de acceso (actualizada el 12/mar/2025) confirma que el `ip_filter` se configura en **Service settings → Cloud and network → Actions → Set IP address allowlist**, que por defecto es `0.0.0.0/0` y que se puede limitar a una IP o rango CIDR.
+
+**8.1 queda cerrada:** la decisión (Aiven Free como principal, Render Free como respaldo) y sus límites están documentados en este informe.
+
+La instancia creada en Aiven usa **PostgreSQL 18.6**, que es la versión que el proveedor habilitó para el servicio. La simulación local se hizo con PostgreSQL 16.15; las migraciones son SQL estándar y no usan características exclusivas de 16. La ejecución real de 8.2/8.3 confirmó el mismo resultado en 18.6.
+
+## 8.2 · Base y roles en la nube
+
+### Procedimiento ejecutado
+
+1. Crear en Aiven un servicio PostgreSQL Free y la base `bodegas_del_atuel`.
+2. Limitar el `ip_filter` a la IP desde la que se administra (provisoria) y, en 8.5, a la IP pública del servidor de la API.
+3. Guardar en `.env` (nunca en el repo): `CLOUD_DB_HOST`, `CLOUD_DB_PORT`, `CLOUD_DB_NAME`, `CLOUD_ADMIN_USER`, `CLOUD_ADMIN_PASSWORD`, `BDA_OWNER_PASSWORD`, además de `DB_PASSWORD` y `REPORTE_RO_PASSWORD`.
+4. Preparar los roles y aplicar las migraciones con `./scripts/migrate.sh` (ver 8.3).
+5. Asignar `LOGIN` y contraseñas con `./scripts/set_role_passwords.sh --cloud`.
+
+### Roles
+
+- `bda_owner`: dueño lógico de la base y de los objetos. En la nube se crea con `LOGIN` y contraseña, porque es el rol con el que se aplican las migraciones.
+- `app_rw`: lectura/escritura mínima para la API; sin DDL y sin `UPDATE` ni `DELETE` de `renglon_comprobante`.
+- `reporte_ro`: solo lectura de las vistas y tablas de reporte.
+
+### Detalle de implementación: 007 se aplica como administrador
+
+`007_roles.sql` hace `COMMENT ON ROLE bda_owner`. En PostgreSQL, comentar un rol exige `ADMIN OPTION` sobre ese rol o ser superusuario. El rol que crea a `bda_owner` es el administrador del proveedor (`avnadmin`), así que es el único que tiene esa opción; `bda_owner` no puede otorgársela a sí mismo (`GRANT bda_owner TO bda_owner` falla con "role is a member of role"). Darle `CREATEROLE` a `bda_owner` tampoco alcanza: el error pasa a "must have the ADMIN option on role bda_owner".
+
+Por eso `migrate.sh` aplica 001–006 y 008 como `bda_owner`, y **007 como administrador**. El administrador conserva:
+
+- membresía en `bda_owner` (necesaria para `ALTER DATABASE ... OWNER TO bda_owner` y para operar sobre objetos del dueño durante 007);
+- `CONNECT` explícito sobre la base, porque 007 revoca `PUBLIC` y sin esa concesión el administrador ya no podría conectarse para asignar contraseñas.
+
+`bda_owner` recibe `CREATEROLE` sólo durante la aplicación de 007 y el script se lo quita al terminar (incluso si falla).
+
+### Esquema `public` en Aiven
+
+El dueño de `public` depende del servicio. Si pertenece al usuario interno `postgres`, `avnadmin` no puede modificarlo hasta reclamarlo con `aiven_extras`:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS aiven_extras CASCADE;
+SELECT * FROM aiven_extras.claim_public_schema_ownership();
+```
+
+Por eso `migrate.sh` consulta el dueño de `public`. Sólo si no es `pg_database_owner`, `bda_owner` ni el administrador, y `aiven_extras` está disponible, crea la extensión y reclama el esquema. Luego ejecuta `GRANT USAGE, CREATE ON SCHEMA public TO bda_owner`. En PostgreSQL común no existe `aiven_extras`, así que sólo hace el `GRANT`. Sin ese permiso, 001 fallaría al crear tablas como `bda_owner` porque en PostgreSQL 15+ `PUBLIC` ya no tiene `CREATE` sobre `public`.
+
+En el servicio real, `public` ya pertenece a `pg_database_owner`; por eso **no se instaló `aiven_extras`** y el esquema quedó sin objetos de proveedor. Si en otro servicio hay que reclamarlo, `public` queda owned por `avnadmin` y al comparar esquemas hay que excluir los objetos de `aiven_extras`.
+
+### Evidencia en ejecución real (9 de noviembre de 2026)
+
+Se ejecutó el flujo completo contra el servicio Aiven, PostgreSQL **18.6**, con `sslmode=require` y la base `bodegas_del_atuel`:
+
+- `./scripts/migrate.sh` terminó con exit 0 y el resumen `tablas=29, vistas=4, secuencias=13, rutinas=15, triggers=10`.
+- La base quedó con dueño `bda_owner`; los 29 objetos de tabla, 4 vistas, 13 secuencias y 15 rutinas quedaron owned por `bda_owner` (0 objetos con otro dueño).
+- `bda_owner` quedó `LOGIN` y `NOCREATEROLE`; `app_rw` y `reporte_ro` quedaron `LOGIN` sin `CREATEROLE`.
+- `./scripts/set_role_passwords.sh --cloud` terminó OK y asignó las tres contraseñas desde `.env`.
+- `public` quedó owned por `pg_database_owner`; las únicas extensiones instaladas fueron `plpgsql` (sin `aiven_extras`).
+- Reejecutar `./scripts/migrate.sh` abortó con exit 1 ("el esquema ya existe") y no modificó los conteos.
+
+También se repitió el flujo en un contenedor PostgreSQL 16.15 con administrador no superusuario, para conservar una prueba reproducible sin depender de Aiven. Los valores reales de host, IP y contraseñas no se registran en este informe.
+
+## 8.3 · Migraciones
+
+`scripts/migrate.sh` aplica `db/migrations/*.sql` en orden:
+
+- **Modo nube (sin argumentos):** usa `CLOUD_DB_*` y `CLOUD_ADMIN_*`. Prepara `bda_owner`, aplica las migraciones y deja la base con el mismo esquema que la local. Usa `sslmode=require` por defecto (`CLOUD_DB_SSLMODE`).
+- **Modo URL (`--db-url`):** aplica todas las migraciones con el usuario de la URL. Se usa para el dry-run local contra una base scratch.
+
+Seguridad:
+
+- Se niega a aplicar si `public.localidad` ya existe, porque las migraciones no son idempotentes.
+- No imprime contraseñas.
+- El administrador se usa para crear `bda_owner`, reclamar `public` si hace falta, transferir la base y aplicar 007; el resto se aplica como `bda_owner`.
+
+### Evidencia de paridad
+
+Se comparó el esquema local (PostgreSQL 16.15) con el de Aiven (PostgreSQL 18.6) usando `pg_dump 18.6 --schema-only --no-owner --no-privileges --schema=public`:
+
+- Ambos dumps tienen 2168 líneas.
+- El `diff` sólo muestra el comentario de versión del servidor y el token `\restrict`/`\unrestrict` que genera cada dump; **no hay diferencias de esquema**.
+
+### Matriz de privilegios en Aiven
+
+Verificada con `has_*_privilege` y con denegaciones vivas:
+
+- `app_rw`: `SELECT/INSERT/UPDATE/DELETE` en `vino`; sin `UPDATE` ni `DELETE` en `renglon_comprobante`; sin `CREATE` sobre `public`; sin `USAGE` sobre secuencias; `EXECUTE` en las 6 rutinas contratadas.
+- `reporte_ro`: `SELECT` en `vw_stock_total_vino`; sin `INSERT` en `vino`; sin `EXECUTE` en las rutinas de negocio.
+- Denegaciones vivas con SQLSTATE `42501`: `app_rw` al crear una tabla (`permission denied for schema public`) y al actualizar `renglon_comprobante`; `reporte_ro` al insertar en `vino`.
+
+### Observación sobre 008
+
+Al aplicar `008_indices.sql` como `bda_owner` (no superusuario), PostgreSQL 18 emite advertencias `permission denied to analyze "pg_..."` para catálogos del sistema (`pg_authid`, `pg_subscription`, etc.). Son advertencias del `ANALYZE` final, no errores: los índices se crean y la migración termina con exit 0.
+
+### Estado para 8.5
+
+La base y los roles están listos para que P3 despliegue la API:
+
+- Conexión: `CLOUD_DB_HOST`, `CLOUD_DB_PORT`, `CLOUD_DB_NAME=bodegas_del_atuel`, `sslmode=require`.
+- Rol de la API: `app_rw` con la contraseña de `DB_PASSWORD`.
+- `bda_owner` es el dueño lógico; `reporte_ro` queda para reportes.
+- La base está vacía: la carga de datos es la tarea 8.4 (P2).
+- El plan Free tiene `max_connections = 20`; la API debe usar un pool pequeño.
+
+**8.2 y 8.3 quedan cerradas técnicamente** contra Aiven; falta el commit/PR y la revisión correspondiente.
