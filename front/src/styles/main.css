@@ -698,6 +698,59 @@ a {
   font-weight: 700;
 }
 
+
+.card-wide {
+  grid-column: 1 / -1;
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.chart-label {
+  display: flex;
+  flex-direction: column;
+  color: var(--vino);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.chart-sub {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+.chart-track {
+  height: 12px;
+  border-radius: 999px;
+  background: #ede6da;
+  overflow: hidden;
+}
+
+.chart-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--vino);
+}
+
+.chart-value {
+  color: var(--vino);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
 @media (max-width: 640px) {
   .container {
     padding: 24px 16px 40px;
@@ -727,5 +780,14 @@ a {
 
   .search-bar .button {
     width: 100%;
+  }
+
+  .chart-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .chart-value {
+    text-align: left;
   }
 }
