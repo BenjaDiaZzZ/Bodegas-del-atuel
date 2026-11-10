@@ -112,6 +112,26 @@ def vinos_sin_stock(pool: ConnectionPool, id_sala: int) -> list[dict]:
             (id_sala,),
         ).fetchall()
 
+def stock_por_sala(pool: ConnectionPool, id_sala: int) -> list[dict]:
+    """Return stock of wines in deposito and sala for a given sala.
+
+    Returns all wines with stock in deposito, with sala stock (COALESCE 0).
+    Ordered by stock_sala DESC, nombre_comercial.
+    """
+    with get_connection(pool) as connection:
+        connection.row_factory = dict_row
+        return connection.execute(
+            "SELECT v.cod_vino, v.nombre_comercial,"
+            " COALESCE(ss.cantidad, 0) AS stock_sala, d.cantidad AS stock_deposito"
+            " FROM vino v"
+            " JOIN stock_deposito d ON d.cod_vino = v.cod_vino"
+            " LEFT JOIN stock_sala ss"
+            "   ON ss.cod_vino = v.cod_vino AND ss.id_sala = %s"
+            " WHERE d.cantidad > 0"
+            " ORDER BY COALESCE(ss.cantidad, 0) DESC, v.nombre_comercial",
+            (id_sala,),
+        ).fetchall()
+
 
 def transportista_activo(pool: ConnectionPool) -> dict | None:
     """Return the transportista with most ingresos in the last month (S7).
