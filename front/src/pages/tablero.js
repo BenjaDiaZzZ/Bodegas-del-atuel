@@ -7,6 +7,7 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 export function renderTablero(outlet) {
   const controller = new AbortController();
   const rangoInicial = rangoTrimestre();
+  let ultimosFilasStock = [];
 
   outlet.innerHTML = plantilla(rangoInicial);
 
@@ -16,6 +17,8 @@ export function renderTablero(outlet) {
   const ventasContenido = outlet.querySelector('#ventas-contenido');
   const stockEstado = outlet.querySelector('#stock-estado');
   const stockContenido = outlet.querySelector('#stock-contenido');
+  const stockSearch = outlet.querySelector('#stock-search');
+  const salasRecientesEl = outlet.querySelector('#salas-recientes');
   const rangoForm = outlet.querySelector('#rango');
   const stockForm = outlet.querySelector('#sala-form');
 
@@ -75,7 +78,11 @@ export function renderTablero(outlet) {
     try {
       const filas = await vinosSinStock(idSala, { signal: controller.signal });
       estado(stockEstado, '');
-      stockContenido.innerHTML = tablaSinStock(filas, idSala);
+      ultimosFilasStock = Array.isArray(filas) ? filas : [];
+      stockContenido.innerHTML = tablaSinStock(ultimosFilasStock, idSala);
+      conectarBusquedaStock();
+      guardarSalaReciente(idSala);
+      renderSalasRecientes();
     } catch (error) {
       if (error.name === 'AbortError') return;
       estado(stockEstado, '');
@@ -87,6 +94,62 @@ export function renderTablero(outlet) {
     elemento.textContent = texto;
     elemento.hidden = !texto;
   }
+
+  function conectarBusquedaStock() {
+    if (!stockSearch) return;
+    stockSearch.oninput = () => {
+      const q = stockSearch.value.trim().toLowerCase();
+      if (!q) {
+        stockContenido.innerHTML = tablaSinStock(ultimosFilasStock, stockForm.elements.namedItem('id_sala').value);
+        return;
+      }
+      const filtradas = ultimosFilasStock.filter((f) => {
+        return (
+          String(f.nombre_comercial).toLowerCase().includes(q) ||
+          String(f.cod_vino).includes(q)
+        );
+      });
+      stockContenido.innerHTML = tablaSinStock(filtradas, stockForm.elements.namedItem('id_sala').value);
+    };
+  }
+
+  function guardarSalaReciente(idSala) {
+    try {
+      const key = 'tablero.salasRecientes';
+      const actuales = JSON.parse(localStorage.getItem(key) || '[]');
+      const num = String(idSala);
+      const filtradas = actuales.filter((v) => v !== num);
+      filtradas.unshift(num);
+      const nuevas = [...new Set(filtradas)].slice(0, 5);
+      localStorage.setItem(key, JSON.stringify(nuevas));
+    } catch {}
+  }
+
+  function renderSalasRecientes() {
+    if (!salasRecientesEl) return;
+    try {
+      const key = 'tablero.salasRecientes';
+      const salas = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!salas.length) {
+        salasRecientesEl.innerHTML = '';
+        return;
+      }
+      salasRecientesEl.innerHTML = `
+        <div class="muted" style="margin:8px 0 4px">Salas recientes:</div>
+        ${salas.map((s) => `
+          <button type="button" class="button button-secondary button-small" data-sala="${s}">Sala #${s}</button>
+        `).join('')}
+      `;
+      salasRecientesEl.querySelectorAll('button[data-sala]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          stockForm.elements.namedItem('id_sala').value = btn.dataset.sala;
+          cargarStock(btn.dataset.sala);
+        });
+      });
+    } catch {}
+  }
+
+  renderSalasRecientes();
 }
 
 function plantilla(rango) {
@@ -116,6 +179,8 @@ function plantilla(rango) {
             </label>
             <button class="button button-secondary" type="submit">Consultar</button>
           </form>
+          <div id="salas-recientes" class="salas-recientes"></div>
+          <input id="stock-search" class="search-input" placeholder="Buscar por nombre o código" />
           <p id="stock-estado" class="status" hidden></p>
           <div id="stock-contenido"></div>
         </section>

@@ -823,3 +823,25 @@ a {
     text-align: left;
   }
 }
+
+.search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--papel);
+  color: var(--tinta);
+  font-size: 14px;
+  margin: 8px 0 12px;
+}
+
+.salas-recientes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.salas-recientes .button-small {
+  padding: 4px 10px;
+}
