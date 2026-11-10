@@ -14,6 +14,8 @@ export function renderCatalogo(outlet, query) {
   const estado = outlet.querySelector('#estado');
   const resultado = outlet.querySelector('#resultado');
   const paginacion = outlet.querySelector('#paginacion');
+  const toggle = outlet.querySelector('#toggle-filtros');
+  const chips = outlet.querySelector('#chips');
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -21,6 +23,28 @@ export function renderCatalogo(outlet, query) {
   });
 
   outlet.querySelector('#limpiar').addEventListener('click', () => navigate('/'));
+
+  toggle.addEventListener('click', () => {
+    const abierto = form.style.display !== 'none';
+    form.style.display = abierto ? 'none' : '';
+    toggle.textContent = abierto ? 'Mostrar filtros' : 'Ocultar filtros';
+    toggle.setAttribute('aria-expanded', String(!abierto));
+  });
+
+  chips?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-chip]');
+    if (!chip) return;
+    const key = chip.dataset.chip;
+    const params = new URLSearchParams();
+    // reconstruir filtros sin el chip presionado
+    const formData = new FormData(form);
+    if (key === 'nombre') formData.set('nombre', '');
+    if (key === 'tipo') formData.set('tipo', '');
+    if (key === 'id_cepa') formData.set('id_cepa', '');
+    if (key === 'cuit_bodega') formData.set('cuit_bodega', '');
+    if (key === 'anada') formData.set('anada', '');
+    navigate('/', paramsDesdeFormulario(formData, 1));
+  });
 
   paginacion.addEventListener('click', (event) => {
     const boton = event.target.closest('button[data-page]');
@@ -33,7 +57,14 @@ export function renderCatalogo(outlet, query) {
   async function cargar() {
     estado.className = 'status';
     estado.textContent = 'Cargando vinos…';
-    resultado.innerHTML = '';
+    resultado.innerHTML = `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Vino</th><th>Tipo</th><th>Añada</th><th>Presentación</th><th>Bodega</th><th class="num">Precio</th><th class="num">Graduación</th><th></th></tr></thead>
+          <tbody>${Array.from({length:6}).map(()=>`<tr><td colspan="8" style="padding:16px;color:var(--muted)">Cargando…</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    `;
     paginacion.innerHTML = '';
 
     try {
@@ -53,6 +84,19 @@ export function renderCatalogo(outlet, query) {
     if (vinos.length === 0) {
       estado.className = 'status';
       estado.textContent = 'No se encontraron vinos con esos filtros.';
+      resultado.innerHTML = `
+        <div class="card" style="text-align:center;padding:32px">
+          <h2 style="margin:0 0 8px;color:var(--vino)">Sin resultados</h2>
+          <p class="muted">Probá ajustar los filtros o crear un nuevo vino.</p>
+          <div style="margin-top:16px">
+            <a class="button" href="#/vinos/nuevo">Nuevo vino</a>
+            <button class="button button-secondary" id="reset-filtros">Limpiar filtros</button>
+          </div>
+        </div>
+      `;
+      paginacion.innerHTML = '';
+      const btnReset = resultado.querySelector('#reset-filtros');
+      btnReset?.addEventListener('click', () => navigate('/'));
       return;
     }
 
@@ -105,6 +149,7 @@ function paramsDesdeFiltros(filtros, page) {
 }
 
 function plantilla(filtros) {
+  const chips = chipsHTML(filtros);
   return `
     <section class="page">
       <div class="page-header">
@@ -120,6 +165,10 @@ function plantilla(filtros) {
         <a class="button button-secondary" href="#/ventas/nueva">Nueva venta</a>
         <a class="button button-secondary" href="#/transferencias/nueva">Transferencias</a>
         <a class="button button-secondary" href="#/tablero">Tablero</a>
+      </div>
+
+      <div class="page-actions" style="justify-content:flex-start;margin:12px 0 0">
+        <button class="button button-secondary button-small" id="toggle-filtros" type="button" aria-expanded="true" aria-controls="filtros">Ocultar filtros</button>
       </div>
 
       <form id="filtros" class="filters" role="search">
@@ -152,11 +201,24 @@ function plantilla(filtros) {
         </div>
       </form>
 
+      <div id="chips" style="margin:12px 0;display:flex;flex-wrap:wrap;gap:8px">${chips}</div>
+
       <p id="estado" class="status" role="status"></p>
       <div id="resultado"></div>
       <nav id="paginacion" class="pagination" aria-label="Paginación"></nav>
     </section>
   `;
+}
+
+function chipsHTML(filtros) {
+  const items = [];
+  if (filtros.nombre) items.push({key:'nombre', label:`Nombre: ${filtros.nombre}`});
+  if (filtros.tipo) items.push({key:'tipo', label:`Tipo: ${tipoVino(filtros.tipo)}`});
+  if (filtros.idCepa) items.push({key:'id_cepa', label:`Cepa: ${filtros.idCepa}`});
+  if (filtros.cuitBodega) items.push({key:'cuit_bodega', label:`Bodega: ${filtros.cuitBodega}`});
+  if (filtros.anada) items.push({key:'anada', label:`Añada: ${filtros.anada}`});
+  if (items.length === 0) return '';
+  return items.map(it => `<span class="pill" style="cursor:pointer" data-chip="${it.key}">${escapeHtml(it.label)} ✕</span>`).join('');
 }
 
 function tabla(vinos) {
